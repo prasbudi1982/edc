@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>POS EDC System Modern</title>
+    
+    <!-- PWA & Mobile Meta Tags -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="POS EDC PRO">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <link rel="icon" type="image/png" href="icons/icon-192.png">
+
+    <link rel="stylesheet" href="css/style.css">
+    
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+</head>
+<body class="theme-dark">
+
+    <!-- Modal Layar Paksa Install PWA -->
+    <div id="pwa-force-overlay" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:#0f172a; z-index:999999; align-items:center; justify-content:center; padding:20px; box-sizing:border-box; font-family:system-ui, -apple-system, sans-serif;">
+        <div style="background:#1e293b; border:1px solid #334155; border-radius:16px; max-width:400px; width:100%; padding:28px; text-align:center; box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);">
+            <div style="width:80px; height:80px; margin:0 auto 16px; background:#10b98115; border-radius:20px; display:flex; align-items:center; justify-content:center; border:1px solid #10b98133;">
+                <img src="icons/icon-192.png" width="56" height="56" style="border-radius:12px;" alt="POS Logo">
+            </div>
+            
+            <h2 style="color:#ffffff; margin:0 0 8px; font-size:1.25rem; font-weight:700;">Instalasi Aplikasi Diperlukan</h2>
+            <p style="color:#94a3b8; font-size:0.875rem; line-height:1.5; margin:0 0 24px;">
+                Untuk dapat menggunakan sistem POS EDC PRO, Anda harus memasang aplikasi ini di layar utama perangkat Anda.
+            </p>
+
+            <button id="btn-force-install" style="width:100%; background:#10b981; color:#ffffff; border:none; padding:12px; border-radius:8px; font-weight:700; font-size:0.95rem; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;">
+                <i data-lucide="download"></i> PASANG SEKARANG
+            </button>
+
+            <!-- Panduan Tambahan Khusus Browser iOS / Safari -->
+            <div id="ios-instructions" style="display:none; margin-top:20px; padding:12px; background:#0f172a; border-radius:8px; text-align:left; border:1px solid #334155;">
+                <span style="color:#f59e0b; font-weight:bold; font-size:0.8rem; display:block; margin-bottom:4px;">Petunjuk iOS (Safari):</span>
+                <ol style="color:#cbd5e1; font-size:0.75rem; margin:0; padding-left:18px; line-height:1.4;">
+                    <li>Tekan tombol <strong>Bagikan / Share</strong> di bawah browser.</li>
+                    <li>Pilih menu <strong>Tambahkan ke Layar Utama</strong>.</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <!-- Splash Screen Overlay -->
+    <div id="splash-screen">
+        <div class="splash-content">
+            <div class="splash-badge">
+                <i data-lucide="shield-check"></i>
+                <span>VERIFIED EDITION</span>
+            </div>
+            
+            <div class="splash-logo-container">
+                <div class="splash-icon-box">
+                    <i data-lucide="cpu"></i>
+                </div>
+                <h1 class="splash-title">POS EDC <span>PRO</span></h1>
+            </div>
+
+            <p class="splash-tagline">Smart Point of Sale Terminal System</p>
+
+            <div class="splash-loader-wrapper">
+                <div class="splash-progress-bar">
+                    <div class="splash-progress-fill"></div>
+                </div>
+                <span class="splash-loading-text">Memuat Sistem...</span>
+            </div>
+
+            <div class="splash-footer">
+                <span class="powered-by">powered by</span>
+                <span class="brand-owner">warung kode pak w</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="edc-container">
+        <!-- Header Status Bar -->
+        <header class="edc-header">
+            <div class="brand">
+                <i data-lucide="cpu"></i>
+                <span id="header-store-name">POS EDC</span>
+            </div>
+            <div class="status-bar">
+                <span id="db-indicator" style="font-size:0.7rem; color:var(--success-color);">[LOCAL]</span>
+                <span id="system-clock">00:00</span>
+                <i data-lucide="wifi" class="icon-sm"></i>
+                <i data-lucide="battery-charging" class="icon-sm"></i>
+            </div>
+        </header>
+
+        <!-- Dynamic Content Area -->
+        <main id="app-content" class="edc-content">
+            <div class="loader">Memuat modul...</div>
+        </main>
+
+        <!-- Bottom Touch Navigation -->
+        <nav class="edc-nav">
+            <button class="nav-btn active" data-module="transaksi">
+                <i data-lucide="shopping-bag"></i>
+                <span>Transaksi</span>
+            </button>
+            <button class="nav-btn" data-module="produk">
+                <i data-lucide="package"></i>
+                <span>Produk</span>
+            </button>
+            <button class="nav-btn" data-module="promosi">
+                <i data-lucide="tag"></i>
+                <span>Promosi</span>
+            </button>
+            <button class="nav-btn" data-module="laporan">
+                <i data-lucide="file-text"></i>
+                <span>Laporan</span>
+            </button>
+            <button class="nav-btn" data-module="setting">
+                <i data-lucide="settings"></i>
+                <span>Setting</span>
+            </button>
+        </nav>
+    </div>
+
+    <script src="js/main.js" type="module"></script>
+</body>
+</html>

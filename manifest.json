@@ -1,0 +1,27 @@
+{
+  "short_name": "POS EDC",
+  "name": "POS EDC PRO - Smart Point of Sale Terminal System",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "id": "/",
+  "start_url": "./index.html",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "display": "standalone",
+  "orientation": "portrait",
+  "scope": "./",
+  "description": "Sistem Kasir Modern POS EDC Pro oleh Warung Kode Pak W",
+  "categories": ["business", "shopping", "utilities"]
+}
