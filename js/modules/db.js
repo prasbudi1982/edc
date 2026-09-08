@@ -1,17 +1,21 @@
 const DB = {
     dbName: 'PosAppDB',
-    dbVersion: 2,
+    dbVersion: 5,
 
     mode: localStorage.getItem('edc_db_mode') || 'local',
     firestore: null,
 
     async getFirestoreInstance() {
+        // LOCAL-FIRST: kalau mode local, jangan coba cloud sama sekali
+        if (this.mode === 'local') return null;
         if (this.firestore) return this.firestore;
 
         const config = JSON.parse(localStorage.getItem('edc_firebase_config') || '{}');
         if (!config.apiKey || !config.projectId) {
             return null;
         }
+        // Kalau config tidak lengkap atau offline, anggap local
+        if (!navigator.onLine) return null;
 
         try {
             const { initializeApp, getApps } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js");
@@ -72,6 +76,21 @@ const DB = {
                     if (!txStore.indexNames.contains('syncStatus')) {
                         txStore.createIndex('syncStatus', 'syncStatus', { unique: false });
                     }
+                }
+
+                // === NEW: DISPOSAL LOGS UNTUK SORTIR EXPIRED / RUSAK / OPNAME ===
+                if (!db.objectStoreNames.contains('disposal_logs')) {
+                    const dispStore = db.createObjectStore('disposal_logs', { keyPath: 'id' });
+                    dispStore.createIndex('prodId', 'prodId', { unique: false });
+                    dispStore.createIndex('type', 'type', { unique: false });
+                    dispStore.createIndex('date', 'date', { unique: false });
+                    dispStore.createIndex('syncStatus', 'syncStatus', { unique: false });
+                } else {
+                    const dispStore = e.target.transaction.objectStore('disposal_logs');
+                    if (!dispStore.indexNames.contains('prodId')) dispStore.createIndex('prodId', 'prodId', { unique: false });
+                    if (!dispStore.indexNames.contains('type')) dispStore.createIndex('type', 'type', { unique: false });
+                    if (!dispStore.indexNames.contains('date')) dispStore.createIndex('date', 'date', { unique: false });
+                    if (!dispStore.indexNames.contains('syncStatus')) dispStore.createIndex('syncStatus', 'syncStatus', { unique: false });
                 }
             };
 
@@ -161,6 +180,100 @@ const DB = {
             }
         }
         return true;
+    },
+
+    // === DISPOSAL LOGS - FIX UTAMA: LOCAL-FIRST, TETAP TAMPIL WALAU CLOUD BELUM SYNC ===
+    async getDisposalLogs() {
+        let idbResult = [];
+        try {
+            const db = await this.open();
+            idbResult = await new Promise((resolve, reject) => {
+                try {
+                    const tx = db.transaction('disposal_logs', 'readonly');
+                    const store = tx.objectStore('disposal_logs');
+                    const req = store.getAll();
+                    req.onsuccess = () => resolve(req.result || []);
+                    req.onerror = () => resolve([]); // jangan throw, fallback ke LS
+                } catch(e){ resolve([]); }
+            });
+        } catch(e){ idbResult = []; }
+
+        // Fallback + merge dengan localStorage biar tetap tampil walau IDB kosong / belum sync
+        let lsResult = [];
+        try { lsResult = JSON.parse(localStorage.getItem('edc_disposal_logs')||'[]'); } catch(e){ lsResult = []; }
+
+        if (idbResult.length === 0 && lsResult.length > 0) return lsResult;
+
+        // Merge deduplicate by id
+        if (idbResult.length > 0 && lsResult.length > 0) {
+            const map = new Map();
+            [...idbResult, ...lsResult].forEach(l=>{
+                if(l && l.id) map.set(l.id, l);
+                else if(l) map.set(`${l.prodId}-${l.date}-${l.type}`, l);
+            });
+            return Array.from(map.values());
+        }
+        return idbResult;
+    },
+
+    async saveDisposalLog(log) {
+        const id = log.id || `disp_${Date.now()}_${Math.random().toString(36).substring(2,6)}`;
+        const payload = {
+            ...log,
+            id,
+            prodId: log.prodId || log.productId || log.id || '',
+            prodName: log.prodName || log.name || 'Tanpa Nama',
+            type: log.type || 'rusak',
+            qty: Number(log.qty || log.quantity || Math.abs(log.diff||0) || 0),
+            diff: Number(log.diff || 0),
+            before: Number(log.before ?? 0),
+            after: Number(log.after ?? 0),
+            reason: log.reason || '',
+            cost: Number(log.cost || log.costPrice || 0),
+            costLoss: Number(log.costLoss || (Number(log.qty||Math.abs(log.diff||0)) * Number(log.cost||0)) || 0),
+            date: log.date || new Date().toISOString(),
+            syncStatus: 'pending',
+            updatedAt: new Date().toISOString()
+        };
+        // 1. Simpan ke localStorage DULU (paling aman, tidak pernah gagal)
+        try {
+            const existing = JSON.parse(localStorage.getItem('edc_disposal_logs')||'[]');
+            if(!existing.find(x=>x.id===payload.id)){
+                existing.push(payload);
+                if(existing.length>500) existing.splice(0, existing.length-500);
+                localStorage.setItem('edc_disposal_logs', JSON.stringify(existing));
+            }
+        } catch(e){ console.warn('LS save fail', e); }
+
+        // 2. Simpan ke IndexedDB (jangan throw kalau gagal, tetap resolve)
+        try {
+            const db = await this.open();
+            await new Promise((resolve, reject) => {
+                try {
+                    const tx = db.transaction('disposal_logs', 'readwrite');
+                    const store = tx.objectStore('disposal_logs');
+                    const req = store.put(payload);
+                    req.onsuccess = () => resolve();
+                    req.onerror = () => resolve(); // jangan reject, sudah ada di LS
+                } catch(e){ resolve(); }
+            });
+        } catch(e){ console.warn('IDB save fail, sudah ada di LS', e); }
+
+        // 3. Sync ke cloud di background, tidak blokir UI, tidak wajib
+        try { this.syncPendingData(); } catch(e){}
+
+        return payload;
+    },
+
+    async deleteDisposalLog(id) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('disposal_logs', 'readwrite');
+            const store = tx.objectStore('disposal_logs');
+            const req = store.delete(id);
+            req.onsuccess = () => resolve(true);
+            req.onerror = (e) => reject(e.target.error);
+        });
     },
 
     async getPromotions() {
@@ -330,25 +443,30 @@ const DB = {
         if (collectionName === 'transactions') return this.updateTransaction(id, payload);
         if (collectionName === 'products') return this.saveProduct({ id, ...payload });
         if (collectionName === 'promotions') return this.savePromotion({ id, ...payload });
+        if (collectionName === 'disposal_logs') return this.saveDisposalLog({ id, ...payload });
     },
 
     async deleteDoc(collectionName, id) {
         if (collectionName === 'transactions') return this.deleteTransaction(id);
         if (collectionName === 'products') return this.deleteProduct(id);
         if (collectionName === 'promotions') return this.deletePromotion(id);
+        if (collectionName === 'disposal_logs') return this.deleteDisposalLog(id);
     },
 
     // --- AUTO-PUSH ENGINE ---
 
     async syncPendingData() {
+        // LOCAL-FIRST: jangan blokir UI, sync di background saja
+        if (this.mode === 'local') return;
         if (!navigator.onLine) return;
         
-        const fs = await this.getFirestoreInstance();
+        let fs;
+        try { fs = await this.getFirestoreInstance(); } catch(e){ return; }
         if (!fs) return;
 
         try {
             const { doc, writeBatch } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js");
-            const stores = ['products', 'promotions', 'transactions'];
+            const stores = ['products', 'promotions', 'transactions', 'disposal_logs'];
 
             for (const storeName of stores) {
                 const db = await this.open();
@@ -390,6 +508,7 @@ const DB = {
     // --- REALTIME PULL ENGINE ---
 
     async listenCloudChanges(onUpdateCallback) {
+        if (this.mode === 'local') return;
         if (!navigator.onLine) return;
         
         const fs = await this.getFirestoreInstance();
@@ -397,7 +516,7 @@ const DB = {
 
         try {
             const { collection, query, onSnapshot } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js");
-            const stores = ['products', 'promotions', 'transactions'];
+            const stores = ['products', 'promotions', 'transactions', 'disposal_logs'];
 
             stores.forEach(storeName => {
                 const q = query(collection(fs, storeName));

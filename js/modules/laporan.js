@@ -110,12 +110,260 @@ const LaporanModule = {
             }
         });
 
-        const totalAsetPenjualan = this.products.reduce((sum, p) => sum + ((Number(p.price || p.hargaJual) || 0) * (Number(p.stock || p.stok) || 0)), 0);
-        const totalAsetModal = this.products.reduce((sum, p) => {
+        // === NEW: FILTER ASET AKTIF VS EXPIRED / RUSAK ===
+        const getExpInfoLaporan = (p) => {
+            const expStr = p.expiredDate || p.expired || p.expired_date || p.expDate || p.tgl_expired || p.expiry;
+            if (!expStr) return { isExpired:false, isNear:false };
+            let d = new Date(expStr);
+            if (isNaN(d.getTime()) && !isNaN(Number(expStr))) d = new Date(Number(expStr));
+            if (isNaN(d.getTime())) return { isExpired:false, isNear:false };
+            const now = new Date(); now.setHours(0,0,0,0); d.setHours(0,0,0,0);
+            const diff = Math.floor((d-now)/(1000*60*60*24));
+            return { isExpired: diff<0, isNear: diff>=0 && diff<=30, days:diff };
+        };
+
+        const activeProducts = this.products.filter(p=>{
+            const exp = getExpInfoLaporan(p);
+            const isRusak = p.kondisi==='rusak' || p.status==='rusak' || p.status==='expired';
+            if (isRusak) return false;
+            if (exp.isExpired) return false;
+            return true;
+        });
+        const expiredProductsForAset = this.products.filter(p=> getExpInfoLaporan(p).isExpired || p.status==='expired' || p.kondisi==='expired');
+        const rusakProductsForAset = this.products.filter(p=> p.kondisi==='rusak' || p.status==='rusak');
+
+                // === FIX: Load disposal logs DULU sebelum hitung modal (bug sebelumnya disposalLogs belum ada) ===
+        let disposalLogs = [];
+        let idbLogs = [];
+        let lsLogs = [];
+        try { idbLogs = await DB.getDisposalLogs() || []; } catch(e){ idbLogs = []; console.warn('IDB getDisposalLogs error', e); }
+        try { lsLogs = JSON.parse(localStorage.getItem('edc_disposal_logs')||'[]'); } catch(e){ lsLogs = []; }
+        const _map = new Map();
+        [...idbLogs, ...lsLogs].forEach(l=>{ if(l && l.id) _map.set(l.id, l); else if(l) _map.set(`${l.prodId}-${l.date}-${l.type}`, l); });
+        disposalLogs = Array.from(_map.values());
+        if(disposalLogs.length===0 && lsLogs.length>0) disposalLogs = lsLogs;
+
+        const totalAsetPenjualan = activeProducts.reduce((sum, p) => sum + ((Number(p.price || p.hargaJual) || 0) * (Number(p.stock || p.stok) || 0)), 0);
+        const totalAsetModal = activeProducts.reduce((sum, p) => {
             const cost = Number(p.costPrice ?? p.cogs ?? p.buyPrice ?? p.hargaBeli ?? p.modal ?? p.cost ?? p.hpp ?? 0);
             return sum + (cost * (Number(p.stock || p.stok) || 0));
         }, 0);
+        const totalAsetExpiredModal = expiredProductsForAset.reduce((sum,p)=>{
+            const cost = Number(p.costPrice ?? p.cogs ?? p.buyPrice ?? p.hargaBeli ?? p.modal ?? p.cost ?? 0);
+            const stok = Number(p.stock||p.stok||0);
+            if(stok===0){
+                const log = disposalLogs.filter(l=>String(l.prodId)===String(p.id) && l.type==='expired').sort((a,b)=>new Date(b.date)-new Date(a.date))[0];
+                if(log && log.costLoss) return sum + Number(log.costLoss);
+                if(log && log.qty) return sum + (Number(log.qty) * cost);
+            }
+            return sum + (cost * stok);
+        },0);
+        const totalAsetRusakModal = rusakProductsForAset.reduce((sum,p)=>{
+            const cost = Number(p.costPrice ?? p.cogs ?? p.buyPrice ?? p.hargaBeli ?? p.modal ?? p.cost ?? 0);
+            const stok = Number(p.stock||p.stok||0);
+            if(stok===0){
+                const log = disposalLogs.filter(l=>String(l.prodId)===String(p.id) && l.type==='rusak').sort((a,b)=>new Date(b.date)-new Date(a.date))[0];
+                if(log && log.costLoss) return sum + Number(log.costLoss);
+                if(log && log.qty) return sum + (Number(log.qty) * cost);
+            }
+            return sum + (cost * stok);
+        },0);
+        const totalKerugianAset = totalAsetExpiredModal + totalAsetRusakModal;
 
+        // Tambahan: modal dari produk yang rusak sebagian (tidak masuk rusakProductsForAset karena stok >0)
+        // Sudah dihitung di totalLossRusakLog (costLoss), jadi totalKerugianLog sudah mencakupnya
+
+        // disposalLogs sudah loaded di atas
+        
+        const disposalExpired = disposalLogs.filter(l=>l.type==='expired');
+        const disposalRusak = disposalLogs.filter(l=>l.type==='rusak');
+        const disposalOpname = disposalLogs.filter(l=>l.type==='opname');
+        const totalLossExpiredLog = disposalExpired.reduce((s,l)=>s+(Number(l.costLoss)||0),0);
+        const totalLossRusakLog = disposalRusak.reduce((s,l)=>s+(Number(l.costLoss)||0),0);
+        // Opname: hitung kerugian dari selisih negatif - costLoss sudah disimpan di produk_final
+        const totalLossOpname = disposalOpname.reduce((s,l)=>{
+            return s + (Number(l.costLoss||0));
+        },0);
+        const totalLossOpnameCount = disposalOpname.length;
+        const totalKerugianLog = totalLossExpiredLog + totalLossRusakLog + totalLossOpname;
+        const totalOpnameSelisih = disposalOpname.reduce((s,l)=>s+Number(l.diff||0),0);
+
+
+
+        // === FITUR: PERINGATAN STOK MENIPIS - PER PRODUK (sinkron tema) ===
+        const lowStockProducts = this.products.filter(p => {
+            const min = Number(p.minStock ?? p.min_stock ?? 5);
+            const stok = Number(p.stock ?? p.stok ?? 0);
+            return stok <= min;
+        }).sort((a,b) => (Number(a.stock||a.stok||0)) - (Number(b.stock||b.stok||0)));
+
+        const lowStockCount = lowStockProducts.length;
+        const criticalCount = lowStockProducts.filter(p => Number(p.stock ?? p.stok ?? 0) === 0).length;
+
+        const lowStockHTML = lowStockCount > 0 ? `
+                <div class="setting-card" style="margin-top:8px; background:var(--bg-card, #1e293b); border:1px solid var(--border-color, #334155); border-left:5px solid #ef4444; border-radius:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+                        <div style="display:flex; align-items:center; gap:6px; cursor:pointer;" onclick="document.getElementById('low-stock-detail').style.display = document.getElementById('low-stock-detail').style.display==='none'?'block':'none'">
+                            <h4 style="color:var(--text-color, #e2e8f0); margin:0; display:flex; align-items:center; gap:6px; font-size:0.85rem;">
+                                ⚠️ Peringatan Stok Menipis
+                                <span style="background:#ef4444; color:#fff; font-size:0.7rem; padding:2px 7px; border-radius:10px;">${lowStockCount} produk</span>
+                                ${criticalCount > 0 ? `<span style="background:#991b1b; color:#fff; font-size:0.65rem; padding:2px 6px; border-radius:10px;">${criticalCount} habis</span>` : ''}
+                            </h4>
+                            <span style="font-size:0.7rem; color:var(--text-secondary, #94a3b8);">▼ Detail</span>
+                        </div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; display:none;" onclick="document.getElementById('low-stock-detail').style.display = document.getElementById('low-stock-detail').style.display==='none'?'block':'none'">
+                        <h4 style="color:#dc2626; margin:0; display:flex; align-items:center; gap:6px;">
+                            ⚠️ Peringatan Stok Menipis
+                            <span style="background:#ef4444; color:#fff; font-size:0.7rem; padding:2px 7px; border-radius:10px;">${lowStockCount} produk</span>
+                            ${criticalCount > 0 ? `<span style="background:#991b1b; color:#fff; font-size:0.65rem; padding:2px 6px; border-radius:10px;">${criticalCount} habis</span>` : ''}
+                        </h4>
+                        <span style="font-size:0.7rem; color:#dc2626;">▼ Klik untuk detail</span>
+                    </div>
+                    <div id="low-stock-detail" style="display:none; margin-top:10px; max-height:200px; overflow-y:auto;">
+                        ${lowStockProducts.map(p => {
+                            const minPerProd = Number(p.minStock ?? p.min_stock ?? 5);
+                            const stok = Number(p.stock ?? p.stok ?? 0);
+                            const isHabis = stok === 0;
+                            const isKritis = stok <= 2;
+                            return `
+                            <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px dashed var(--border-color, #334155); font-size:0.8rem;">
+                                <div style="flex:1;">
+                                    <strong style="${isHabis ? 'color:#991b1b;' : isKritis ? 'color:#dc2626;' : 'color:#b45309;'}">${p.name || p.nama || 'Tanpa Nama'}</strong>
+                                    <div style="font-size:0.7rem; opacity:0.7;">${p.barcode || p.sku || '-'} | ${p.category || p.kategori || 'Tanpa Kategori'}</div>
+                                </div>
+                                <div style="text-align:right;">
+                                    <span style="font-weight:bold; padding:3px 8px; border-radius:12px; border:1px solid var(--border-color); background:${isHabis ? 'rgba(239,68,68,0.12)' : isKritis ? 'rgba(245,158,11,0.12)' : 'rgba(234,179,8,0.12)'}; color:${isHabis ? '#ef4444' : isKritis ? '#f59e0b' : 'var(--text-color)'};">
+                                        ${isHabis ? 'HABIS' : stok + ' pcs'}
+                                    </span>
+                                </div>
+                            </div>`;
+                        }).join('')}
+                        <div style="margin-top:8px; text-align:right;">
+                            <button class="btn-touch" style="font-size:0.7rem; padding:5px 10px; background:var(--bg-card); border:1px solid #ef4444; color:#ef4444; border-radius:6px;" onclick="window.app.loadModule('produk')">Kelola Stok</button>
+                        </div>
+                    </div>
+                </div>` : '';
+
+        // === FITUR BARU: PERINGATAN PRODUK EXPIRED (minimal 1 bulan sebelum expired) - FIXED ===
+        const getExpiredInfo = (p) => {
+            // Cek semua kemungkinan field
+            const expStr = p.expired || p.expired_date || p.expDate || p.tgl_expired || p.expiry || p.tglExpired || p.exp || p.expiredDate || p.tanggal_expired;
+            if (!expStr) return null;
+            let d;
+            // Coba parse langsung
+            d = new Date(expStr);
+            if (isNaN(d.getTime())) {
+                // Coba timestamp number
+                if (!isNaN(Number(expStr))) {
+                    d = new Date(Number(expStr));
+                }
+            }
+            if (isNaN(d.getTime())) {
+                // Coba format dd-mm-yyyy atau dd/mm/yyyy
+                const str = String(expStr).trim();
+                const m = str.match(/^(\d{1,2})[-/\s](\d{1,2})[-/\s](\d{2,4})$/);
+                if (m) {
+                    const day = parseInt(m[1],10);
+                    const month = parseInt(m[2],10)-1;
+                    let year = parseInt(m[3],10);
+                    if (year < 100) year += 2000;
+                    d = new Date(year, month, day);
+                }
+            }
+            if (isNaN(d.getTime())) return null;
+            const now = new Date();
+            now.setHours(0,0,0,0);
+            d.setHours(0,0,0,0);
+            const diffDays = Math.floor((d - now) / (1000*60*60*24));
+            return { date: d, diffDays, expStr };
+        };
+
+        const allWithExpiry = this.products.filter(p => getExpiredInfo(p) !== null);
+        const expiredProducts = this.products.filter(p => {
+            const info = getExpiredInfo(p);
+            if (!info) return false;
+            const stok = Number(p.stock ?? p.stok ?? 0);
+            // Tampilkan meski stok 0 untuk warning expired (penting)
+            // Tapi untuk promo, nanti stok 0 akan di-skip
+            return info.diffDays <= 30;
+        }).map(p => {
+            const info = getExpiredInfo(p);
+            return { product: p, ...info };
+        }).sort((a,b) => a.diffDays - b.diffDays);
+
+        const expiredCount = expiredProducts.length;
+        const alreadyExpiredCount = expiredProducts.filter(e => e.diffDays < 0).length;
+        const near7DaysCount = expiredProducts.filter(e => e.diffDays >=0 && e.diffDays <=7).length;
+        const near30DaysCount = expiredProducts.filter(e => e.diffDays >7 && e.diffDays <=30).length;
+
+        console.log(`⏰ [Laporan] Total produk: ${this.products.length}, dengan tgl expired: ${allWithExpiry.length}, expired/H-30: ${expiredCount}`);
+
+        const expiredHTML = expiredCount > 0 ? `
+                <div class="setting-card" style="margin-top:8px; background:var(--bg-card, #1e293b); border:1px solid var(--border-color, #334155); border-left:5px solid #f59e0b; border-radius:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; cursor:pointer;" onclick="const el=document.getElementById('expired-detail'); el.style.display = el.style.display==='none'?'block':'none';">
+                        <h4 style="color:var(--text-color, #e2e8f0); margin:0; display:flex; align-items:center; gap:6px; font-size:0.85rem; flex-wrap:wrap;">
+                            ⏰ Peringatan Expired (H-30)
+                            <span style="background:#f59e0b; color:#fff; font-size:0.7rem; padding:2px 7px; border-radius:10px;">${expiredCount} produk</span>
+                            ${alreadyExpiredCount > 0 ? `<span style="background:#dc2626; color:#fff; font-size:0.65rem; padding:2px 6px; border-radius:10px;">${alreadyExpiredCount} expired</span>` : ''}
+                            ${near7DaysCount > 0 ? `<span style="background:#ef4444; color:#fff; font-size:0.65rem; padding:2px 6px; border-radius:10px;">${near7DaysCount} H-7</span>` : ''}
+                            ${near30DaysCount > 0 ? `<span style="background:#fbbf24; color:#000; font-size:0.65rem; padding:2px 6px; border-radius:10px;">${near30DaysCount} H-30</span>` : ''}
+                        </h4>
+                        <span style="font-size:0.7rem; color:var(--text-secondary, #94a3b8);">▼ Detail</span>
+                    </div>
+                    <div id="expired-detail" style="display:none; margin-top:10px; max-height:300px; overflow-y:auto;">
+                        ${expiredProducts.map(({product: p, date, diffDays}) => {
+                            const stok = Number(p.stock ?? p.stok ?? 0);
+                            const cost = Number(p.costPrice ?? p.cogs ?? p.buyPrice ?? p.hargaBeli ?? p.modal ?? 0) || 0;
+                            const price = Number(p.price ?? p.hargaJual ?? 0) || 0;
+                            const totalModal = stok * cost;
+                            let status = '';
+                            let bg = '';
+                            let color = '';
+                            let icon = '';
+                            if (diffDays < 0) {
+                                status = `EXPIRED ${Math.abs(diffDays)} hari lalu`;
+                                bg = 'rgba(239,68,68,0.12)'; color = '#ef4444'; icon = '🚨';
+                            } else if (diffDays === 0) {
+                                status = 'EXPIRED HARI INI';
+                                bg = 'rgba(239,68,68,0.12)'; color = '#ef4444'; icon = '🚨';
+                            } else if (diffDays <= 7) {
+                                status = `H-${diffDays} hari`;
+                                bg = 'rgba(245,158,11,0.15)'; color = '#f59e0b'; icon = '⚠️';
+                            } else {
+                                status = `H-${diffDays} hari`;
+                                bg = 'rgba(234,179,8,0.12)'; color = 'var(--text-color)'; icon = '⏰';
+                            }
+                            const expDateStr = date.toLocaleDateString('id-ID', {day:'2-digit', month:'short', year:'numeric'});
+                            return `
+                            <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px dashed var(--border-color, #334155); font-size:0.8rem; gap:8px;">
+                                <div style="flex:1; min-width:0;">
+                                    <strong style="color:${color};">${icon} ${p.name || p.nama || 'Tanpa Nama'}</strong>
+                                    <div style="font-size:0.7rem; opacity:0.8; margin-top:2px;">
+                                        Exp: ${expDateStr} (${status}) | Stok: ${stok} pcs | Modal: Rp ${totalModal.toLocaleString('id-ID')}
+                                    </div>
+                                </div>
+                                <div style="text-align:right; flex-shrink:0;">
+                                    <div style="font-weight:bold; padding:3px 8px; border-radius:12px; border:1px solid var(--border-color); background:${bg}; color:${color}; font-size:0.7rem;">
+                                        ${status}
+                                    </div>
+                                </div>
+                            </div>`;
+                        }).join('')}
+                        <div style="margin-top:10px; display:flex; gap:6px; justify-content:flex-end;">
+                            <button class="btn-touch" style="font-size:0.7rem; padding:5px 10px; background:#f59e0b; color:#fff; border:none; border-radius:6px;" onclick="window.app && window.app.loadModule && window.app.loadModule('promosi')">Buat Promo Clearance</button>
+                        </div>
+                    </div>
+                </div>` : `
+                <div class="setting-card" style="margin-top:8px; background:var(--bg-card, #1e293b); border:1px dashed var(--border-color, #334155); border-radius:8px; padding:10px;">
+                    <div style="display:flex; align-items:center; gap:6px; font-size:0.8rem; color:var(--text-secondary);">
+                        <span>✅</span>
+                        <span>Tidak ada produk expired dalam 30 hari</span>
+                        <span style="font-size:0.65rem; opacity:0.7;">(${allWithExpiry.length} produk punya tgl expired)</span>
+                    </div>
+                </div>`;
+
+        
         const filteredData = this.getFilteredTransactions();
         const totalOmset = filteredData.reduce((sum, t) => sum + (Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0)), 0);
         const totalTrx = filteredData.length;
@@ -227,34 +475,112 @@ const LaporanModule = {
                     </div>
                 </div>
 
-                <div class="stat-grid" style="margin-top:8px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
-                    <div class="stat-card">
-                        <h4 style="font-size:0.75rem; color:#666;">TOTAL OMSET</h4>
-                        <div class="value" style="color: var(--success-color, #22c55e); font-weight:bold;">Rp ${totalOmset.toLocaleString('id-ID')}</div>
-                        <small style="font-size:0.65rem; color:#888;">Total HPP: Rp ${totalHPP.toLocaleString('id-ID')}</small>
+                ${lowStockHTML}
+                ${expiredHTML}
+                ${(() => {
+                    // FIX: hitung rusak/expired dari status + log (biar sinkron dengan Produk)
+                    const expiredProdIdsFromLog = new Set(disposalExpired.map(l=>String(l.prodId)));
+                    const rusakProdIdsFromLog = new Set(disposalRusak.map(l=>String(l.prodId)));
+                    const expiredFromLogCount = [...expiredProdIdsFromLog].filter(id=>!expiredProductsForAset.some(p=>String(p.id)===id)).length;
+                    const rusakFromLogCount = [...rusakProdIdsFromLog].filter(id=>!rusakProductsForAset.some(p=>String(p.id)===id)).length;
+
+                    const activeCount = activeProducts.length;
+                    const expCount = expiredProductsForAset.length + expiredFromLogCount;
+                    const rusakCount = rusakProductsForAset.length + rusakFromLogCount;
+                    const lossLogCount = disposalLogs.length;
+                    if (expCount===0 && rusakCount===0 && lossLogCount===0) return '';
+                    return `
+                <div class="setting-card" style="margin-top:8px; background:var(--bg-card); border:1px solid var(--border-color); border-left:5px solid #6b7280; border-radius:8px; padding:10px;">
+                    <h4 style="margin:0 0 10px 0; font-size:0.8rem; display:flex; align-items:center; gap:6px; color:var(--text-color); flex-wrap:wrap;">📦 Sortir & Kerugian
+                        <span style="background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-secondary); font-size:0.6rem; padding:2px 8px; border-radius:12px;">${expCount+rusakCount} tidak aktif • ${disposalOpname.length} opname</span>
+                    </h4>
+                    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; font-size:0.75rem;">
+                        <div style="background:var(--bg-card); border:1px solid #ef4444; border-left:3px solid #ef4444; border-radius:8px; padding:8px;">
+                            <div style="color:var(--text-secondary); font-size:0.6rem; margin-bottom:2px;">🚨 Expired</div>
+                            <div style="font-weight:bold; color:#ef4444; font-size:0.75rem; line-height:1.2;">${disposalExpired.reduce((s,l)=>s+Number(l.qty||0),0) || expCount} pcs<br>Rp ${totalAsetExpiredModal.toLocaleString('id-ID')}</div>
+                            <div style="font-size:0.55rem; color:var(--text-secondary); margin-top:4px; line-height:1.2;">Log: Rp ${totalLossExpiredLog.toLocaleString('id-ID')}<br>(${disposalExpired.length} log • ${expCount} prod)</div>
+                        </div>
+                        <div style="background:var(--bg-card); border:1px solid var(--border-color); border-left:3px solid #6b7280; border-radius:8px; padding:8px;">
+                            <div style="color:var(--text-secondary); font-size:0.6rem; margin-bottom:2px;">🗑️ Rusak</div>
+                            <div style="font-weight:bold; color:var(--text-color); font-size:0.75rem; line-height:1.2;">${disposalRusak.reduce((s,l)=>s+Number(l.qty||0),0) || rusakCount} pcs<br>Rp ${totalAsetRusakModal.toLocaleString('id-ID')}</div>
+                            <div style="font-size:0.55rem; color:var(--text-secondary); margin-top:4px; line-height:1.2;">Log: Rp ${totalLossRusakLog.toLocaleString('id-ID')}<br>(${disposalRusak.length} log • ${rusakCount} prod)</div>
+                        </div>
+                        <div style="background:var(--bg-card); border:1px solid #f59e0b; border-left:3px solid #f59e0b; border-radius:8px; padding:8px;">
+                            <div style="color:var(--text-secondary); font-size:0.6rem; margin-bottom:2px;">📋 Opname</div>
+                            <div style="font-weight:bold; color:#f59e0b; font-size:0.75rem; line-height:1.2;">${disposalOpname.length} log<br>${totalOpnameSelisih>0?'+':''}${totalOpnameSelisih} pcs</div>
+                            <div style="font-size:0.55rem; color:var(--text-secondary); margin-top:4px; line-height:1.2;">Loss: Rp ${totalLossOpname.toLocaleString('id-ID')}<br>Selisih stok</div>
+                        </div>
                     </div>
-                    <div class="stat-card">
-                        <h4 style="font-size:0.75rem; color:#666;">LABA BERSIH</h4>
-                        <div class="value" style="color: ${totalLabaBersih >= 0 ? '#0284c7' : '#ef4444'}; font-weight:bold;">
+                    <div style="margin-top:10px; padding:10px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:8px; font-size:0.75rem;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px dashed var(--border-color);">
+                            <span style="color:var(--text-secondary); font-size:0.7rem;">Aset Aktif (bisa jual)</span>
+                            <b style="color:#22c55e; font-size:0.8rem;">Rp ${totalAsetModal.toLocaleString('id-ID')} • ${activeCount} produk</b>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; margin-top:4px;">
+                            <span style="color:var(--text-secondary); font-size:0.7rem;">Total Kerugian (Expired+Rusak+Opname)</span>
+                            <b style="color:#ef4444; font-size:0.8rem;">Rp ${(totalKerugianAset + totalKerugianLog).toLocaleString('id-ID')}</b>
+                        </div>
+                        <div style="font-size:0.55rem; color:var(--text-secondary); margin-top:4px; opacity:0.7;">*Aset aktif tidak termasuk expired/rusak. Opname negatif = kehilangan stok.</div>
+                    </div>
+                    ${disposalLogs.length>0 ? `
+                    <div style="margin-top:8px;">
+                        <div style="font-size:0.7rem; font-weight:bold; margin-bottom:4px; cursor:pointer;" onclick="document.getElementById('disposal-detail-laporan').style.display = document.getElementById('disposal-detail-laporan').style.display==='none'?'block':'none'">📜 Log Buang/Rusak/Opname (${disposalLogs.length}) ▼</div>
+                        <div id="disposal-detail-laporan" style="display:none; max-height:200px; overflow-y:auto; font-size:0.7rem; background:var(--bg-card); border:1px solid var(--border-color); border-radius:6px; padding:6px; margin-top:4px;">
+                            ${disposalLogs.slice(-20).reverse().map(l=>{
+                                const isOpname = l.type==='opname';
+                                const diffStr = isOpname ? `${Number(l.diff)>0?'+':''}${l.diff} pcs ( ${l.before} → ${l.after} )` : `${l.qty||''} pcs`;
+                                const color = l.type==='expired'?'#ef4444':l.type==='rusak'?'var(--text-secondary)':'#f59e0b';
+                                return `
+                                <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed var(--border-color); gap:6px;">
+                                    <div style="flex:1;">
+                                        <div style="font-weight:600; color:var(--text-color);">${new Date(l.date).toLocaleDateString('id-ID')} - ${l.prodName||l.prodId}</div>
+                                        <div style="font-size:0.65rem; color:var(--text-secondary);">${l.type.toUpperCase()} • ${diffStr} • ${l.reason||''}</div>
+                                    </div>
+                                    <div style="text-align:right;">
+                                        <div style="font-size:0.65rem; color:${color}; font-weight:bold;">${l.type}</div>
+                                        ${l.costLoss ? `<div style="font-size:0.6rem; color:#ef4444;">Rp ${Number(l.costLoss).toLocaleString('id-ID')}</div>` : ''}
+                                    </div>
+                                </div>
+                            `}).join('')}
+                            ${disposalLogs.length>15 ? `<div style="text-align:center; font-size:0.6rem; color:var(--text-secondary); margin-top:4px;">Menampilkan 20 terbaru dari ${disposalLogs.length} log</div>` : ''}
+                        </div>
+                    </div>
+                    ` : ''}
+                </div>
+                `;
+                })()}
+
+                <div class="stat-grid" style="margin-top:10px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
+                    <div class="stat-card" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:10px;">
+                        <h4 style="font-size:0.65rem; color:var(--text-secondary); margin:0 0 4px 0; letter-spacing:0.5px;">TOTAL OMSET</h4>
+                        <div class="value" style="color: var(--success-color, #22c55e); font-weight:bold; font-size:0.95rem;">Rp ${totalOmset.toLocaleString('id-ID')}</div>
+                        <small style="font-size:0.65rem; color:var(--text-secondary);">HPP: Rp ${totalHPP.toLocaleString('id-ID')}</small>
+                    </div>
+                    <div class="stat-card" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:10px;">
+                        <h4 style="font-size:0.65rem; color:var(--text-secondary); margin:0 0 4px 0;">LABA BERSIH</h4>
+                        <div class="value" style="color: ${totalLabaBersih >= 0 ? '#0284c7' : '#ef4444'}; font-weight:bold; font-size:0.95rem;">
                             Rp ${totalLabaBersih.toLocaleString('id-ID')}
                         </div>
-                        <small style="font-size:0.65rem; color:#888;">Margin: ${profitMargin}%</small>
+                        <small style="font-size:0.65rem; color:var(--text-secondary);">Margin: ${profitMargin}%</small>
                     </div>
-                    <div class="stat-card">
-                        <h4 style="font-size:0.75rem; color:#666;">TOTAL TRANSAKSI</h4>
-                        <div class="value">${totalTrx} TRX</div>
-                        <small style="font-size:0.65rem; color:#888;">Rata-rata: Rp ${avgBasketSize.toLocaleString('id-ID')}</small>
+                    <div class="stat-card" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:10px;">
+                        <h4 style="font-size:0.65rem; color:var(--text-secondary); margin:0 0 4px 0;">TOTAL TRANSAKSI</h4>
+                        <div class="value" style="color:var(--text-color); font-weight:bold; font-size:0.9rem;">${totalTrx} TRX</div>
+                        <small style="font-size:0.65rem; color:var(--text-secondary);">Rata: Rp ${avgBasketSize.toLocaleString('id-ID')}</small>
                     </div>
-                    <div class="stat-card">
-                        <h4 style="font-size:0.75rem; color:#666;">TOTAL ASET STOK</h4>
-                        <div class="value" style="color:#eab308; font-weight:bold;">Rp ${totalAsetModal.toLocaleString('id-ID')}</div>
-                        <small style="font-size:0.65rem; color:#888;">Est. Jual: Rp ${totalAsetPenjualan.toLocaleString('id-ID')}</small>
+                    <div class="stat-card" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:4px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <h4 style="font-size:0.65rem; color:var(--text-secondary); margin:0; letter-spacing:0.5px;">ASET STOK AKTIF</h4>
+                            ${(totalAsetExpiredModal+totalAsetRusakModal)>0 ? `<span style="background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.2); color:#ef4444; font-size:0.55rem; padding:2px 6px; border-radius:12px; white-space:nowrap;">Loss Rp ${(totalAsetExpiredModal+totalAsetRusakModal).toLocaleString('id-ID')}</span>` : ''}
+                        </div>
+                        <div class="value" style="color:#eab308; font-weight:bold; font-size:0.95rem; line-height:1.2;">Rp ${totalAsetModal.toLocaleString('id-ID')}</div>
+                        <small style="font-size:0.6rem; color:var(--text-secondary); line-height:1.3;">Jual: Rp ${totalAsetPenjualan.toLocaleString('id-ID')} • ${activeProducts.length} produk</small>
                     </div>
                 </div>
 
-                <!-- Kontainer Chart Canvas -->
-                <div class="setting-card" style="margin-top:10px;">
-                    <h4 style="margin-bottom:8px;">
+                <!-- Kontainer Chart Canvas - TEMA SYNC -->
+                <div class="setting-card" style="margin-top:10px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:10px;">
+                    <h4 style="margin-bottom:8px; color:var(--text-color); font-size:0.85rem;">
                         Grafik Trend Penjualan ${this.filterType === 'today' ? '(Petransaksi / Jam)' : ''}
                     </h4>
                     <div id="chart-container" style="width:100%; min-height:200px; height:200px; position:relative;">
@@ -263,11 +589,11 @@ const LaporanModule = {
                 </div>
 
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin-top: 10px;">
-                    <div class="card" style="padding:8px;">
-                        <h5 style="margin-bottom:6px; font-size:0.8rem;">📦 5 Produk Terlaris</h5>
+                    <div class="card" style="padding:10px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px;">
+                        <h5 style="margin-bottom:8px; font-size:0.8rem; color:var(--text-color);">📦 5 Produk Terlaris</h5>
                         <ul style="list-style:none; padding:0; margin:0; font-size:0.75rem;">
                             ${topItems.length ? topItems.map(([name, qty]) => `
-                                <li style="display:flex; justify-content:space-between; margin-bottom:4px; border-bottom:1px dashed #eee; padding-bottom:2px;">
+                                <li style="display:flex; justify-content:space-between; margin-bottom:4px; border-bottom:1px dashed var(--border-color); padding-bottom:2px;">
                                     <span>${name}</span>
                                     <b>${qty} pcs</b>
                                 </li>
@@ -275,11 +601,11 @@ const LaporanModule = {
                         </ul>
                     </div>
 
-                    <div class="card" style="padding:8px;">
-                        <h5 style="margin-bottom:6px; font-size:0.8rem;">💳 Metode Pembayaran</h5>
+                    <div class="card" style="padding:10px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px;">
+                        <h5 style="margin-bottom:8px; font-size:0.8rem; color:var(--text-color);">💳 Metode Pembayaran</h5>
                         <ul style="list-style:none; padding:0; margin:0; font-size:0.75rem;">
                             ${Object.keys(paymentStats).length ? Object.entries(paymentStats).map(([method, amt]) => `
-                                <li style="display:flex; justify-content:space-between; margin-bottom:4px; border-bottom:1px dashed #eee; padding-bottom:2px;">
+                                <li style="display:flex; justify-content:space-between; margin-bottom:4px; border-bottom:1px dashed var(--border-color); padding-bottom:2px;">
                                     <span>${method}</span>
                                     <b>Rp ${amt.toLocaleString('id-ID')}</b>
                                 </li>
@@ -302,15 +628,15 @@ const LaporanModule = {
                     <input type="file" id="file-import-json" accept=".json" style="display:none;">
                 </div>
 
-                <div class="card" style="margin-top:10px; padding:6px; overflow-x:auto;">
-                    <table class="table-custom" style="width:100%; font-size:0.8rem; border-collapse:collapse;">
+                <div class="card" style="margin-top:10px; padding:8px; overflow-x:auto; background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px;">
+                    <table class="table-custom" style="width:100%; font-size:0.8rem; border-collapse:collapse; color:var(--text-color);">
                         <thead>
-                            <tr style="border-bottom:1px solid #ddd; text-align:left;">
-                                <th style="padding:6px;">Waktu</th>
-                                <th style="padding:6px;">Metode / Pelanggan</th>
-                                <th style="padding:6px;">Omset</th>
-                                <th style="padding:6px; color:#0284c7;">Laba Bersih</th>
-                                <th style="padding:6px; text-align:center;">Aksi</th>
+                            <tr style="border-bottom:1px solid var(--border-color); text-align:left; background:var(--bg-secondary);">
+                                <th style="padding:8px 6px; color:var(--text-secondary); font-size:0.7rem;">Waktu</th>
+                                <th style="padding:8px 6px; color:var(--text-secondary); font-size:0.7rem;">Metode / Pelanggan</th>
+                                <th style="padding:8px 6px; color:var(--text-secondary); font-size:0.7rem;">Omset</th>
+                                <th style="padding:8px 6px; color:#0284c7; font-size:0.7rem;">Laba</th>
+                                <th style="padding:8px 6px; text-align:center; color:var(--text-secondary); font-size:0.7rem;">Aksi</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -327,7 +653,7 @@ const LaporanModule = {
                                 const customerPhone = this.getCustomerPhone(t);
 
                                 return `
-                                    <tr style="border-bottom:1px solid #eee;">
+                                    <tr style="border-bottom:1px solid var(--border-color);">
                                         <td style="padding:6px;"><small>${formattedTime}</small></td>
                                         <td style="padding:6px;">
                                             <span style="font-size:0.75rem; font-weight:${isHutang ? 'bold' : 'normal'}; color:${isHutang ? '#dc2626' : 'inherit'};">
@@ -383,9 +709,9 @@ const LaporanModule = {
 
         return `
             <div id="modal-detail-overlay" style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:9999; padding:12px;">
-                <div style="background:#fff; color:#000; width:100%; max-width:380px; border-radius:8px; padding:16px; box-shadow:0 4px 12px rgba(0,0,0,0.3); font-family:sans-serif; max-height:90vh; overflow-y:auto;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; padding-bottom:8px; margin-bottom:10px;">
-                        <h4 style="margin:0; font-size:1rem; color:#1e293b;">Rincian Transaksi</h4>
+                <div style="background:var(--bg-card); color:var(--text-color); border:1px solid var(--border-color); width:100%; max-width:380px; border-radius:8px; padding:16px; box-shadow:0 4px 12px rgba(0,0,0,0.3); font-family:sans-serif; max-height:90vh; overflow-y:auto;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color); padding-bottom:8px; margin-bottom:10px;">
+                        <h4 style="margin:0; font-size:1rem; color:var(--text-color);">Rincian Transaksi</h4>
                         <button id="btn-close-modal-x" style="background:none; border:none; font-size:1.2rem; cursor:pointer; color:#666;">&times;</button>
                     </div>
 
@@ -400,7 +726,7 @@ const LaporanModule = {
                     <div style="border-top:1px dashed #ccc; margin:8px 0;"></div>
                     <div style="font-weight:bold; font-size:0.8rem; margin-bottom:6px;">Daftar Item / Produk:</div>
 
-                    <div style="max-height:200px; overflow-y:auto; border:1px solid #f1f5f9; border-radius:6px; padding:6px; background:#f8fafc;">
+                    <div style="max-height:200px; overflow-y:auto; border:1px solid #f1f5f9; border-radius:6px; padding:6px; background:var(--bg-secondary);">
                         ${items.length ? items.map(item => {
                             const name = item.name || item.nama || item.title || 'Produk';
                             const qty = Number(item.qty || item.quantity || item.jumlah || 1);
@@ -410,10 +736,10 @@ const LaporanModule = {
                             return `
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; border-bottom:1px solid #e2e8f0; padding-bottom:4px; font-size:0.75rem;">
                                     <div>
-                                        <b style="color:#0f172a;">${name}</b><br>
+                                        <b style="color:var(--text-color);">${name}</b><br>
                                         <span style="color:#64748b;">${qty} x Rp ${price.toLocaleString('id-ID')}</span>
                                     </div>
-                                    <div style="font-weight:bold; color:#1e293b;">
+                                    <div style="font-weight:bold; color:var(--text-color);">
                                         Rp ${itemTotal.toLocaleString('id-ID')}
                                     </div>
                                 </div>
@@ -434,7 +760,7 @@ const LaporanModule = {
                                 <span>-Rp ${discount.toLocaleString('id-ID')}</span>
                             </div>
                         ` : ''}
-                        <div style="display:flex; justify-content:space-between; font-weight:bold; font-size:0.9rem; color:#0f172a; margin-top:6px; border-top:1px solid #e2e8f0; padding-top:4px;">
+                        <div style="display:flex; justify-content:space-between; font-weight:bold; font-size:0.9rem; color:var(--text-color); margin-top:6px; border-top:1px solid #e2e8f0; padding-top:4px;">
                             <span>TOTAL:</span>
                             <span style="color:#16a34a;">Rp ${total.toLocaleString('id-ID')}</span>
                         </div>
@@ -456,7 +782,7 @@ const LaporanModule = {
     init() {
         window.LaporanModule = this;
 
-        document.getElementById('filter-period')?.addEventListener('change', (e) => {
+document.getElementById('filter-period')?.addEventListener('change', (e) => {
             this.filterType = e.target.value;
             this.currentPage = 1;
             if (this.filterType !== 'custom') {
@@ -796,161 +1122,293 @@ const LaporanModule = {
         reader.readAsText(file);
     },
 
-    // Fungsi Rendering Chart Canvas
+    // ===== FIXED CHART - SUPPORT TODAY/WEEK/MONTH/YEAR/CUSTOM =====
     renderChart() {
         const canvas = document.getElementById('chart-penjualan');
         const container = document.getElementById('chart-container');
         if (!canvas || !container) return;
 
         const ctx = canvas.getContext('2d');
-
-        // Mengatur ukuran canvas mengikuti lebar kontainer
+        
+        // Fix canvas size dengan DPR untuk crisp + fallback jika container 0
         const rect = container.getBoundingClientRect();
-        const width = rect.width || container.clientWidth || 300;
-        const height = rect.height || container.clientHeight || 200;
-
-        canvas.width = width;
-        canvas.height = height;
+        let width = rect.width || container.clientWidth || container.offsetWidth || 320;
+        let height = rect.height || container.clientHeight || 220;
+        if (width < 50) width = window.innerWidth - 32 || 320; // fallback jika hidden
+        const dpr = window.devicePixelRatio || 1;
+        
+        // Set ukuran display
+        canvas.style.width = width + 'px';
+        canvas.style.height = height + 'px';
+        // Set ukuran internal untuk DPR
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.scale(dpr, dpr);
 
         const filtered = this.getFilteredTransactions();
-        const datesMap = {};
+        let labels = [];
+        let values = [];
 
-        // Urutkan transaksi dari terlama ke terbaru
-        const sortedFiltered = [...filtered].reverse();
+        const parseDate = (t) => {
+            const timeStr = t.createdAt || t.timestamp || t.waktu || t.date;
+            if (!timeStr) return null;
+            let d = new Date(timeStr);
+            if (isNaN(d.getTime()) && !isNaN(Number(timeStr))) d = new Date(Number(timeStr));
+            if (isNaN(d.getTime())) return null;
+            return d;
+        };
 
-        // LOGIKA PENENTUAN SUMBU X (Garis Waktu)
-        // Jika mode Hari Ini (today), kelompokkan berdasarkan Jam/Waktu transaksi (Petransaksi)
+        // Urutkan lama -> baru
+        const sorted = [...filtered].sort((a,b)=>{
+            const da = parseDate(a); const db = parseDate(b);
+            return (da?da.getTime():0) - (db?db.getTime():0);
+        });
+
         if (this.filterType === 'today') {
-            sortedFiltered.forEach(t => {
-                const timeStr = t.createdAt || t.timestamp || t.waktu;
-                if (!timeStr) return;
-
-                let d = new Date(timeStr);
-                if (isNaN(d.getTime()) && !isNaN(Number(timeStr))) {
-                    d = new Date(Number(timeStr));
+            // PER TRANSAKSI + PER JAM: tampilkan per transaksi (maks 20 terakhir agar tidak padat)
+            // Jika transaksi hari ini >20, agregasi per jam
+            if (sorted.length <= 20) {
+                labels = sorted.map(t=>{
+                    const d = parseDate(t);
+                    return d ? d.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'}) : '-';
+                });
+                values = sorted.map(t=> Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0));
+            } else {
+                // Agregasi per jam 0-23
+                const hourMap = {};
+                for (let h=0; h<24; h++) hourMap[h]=0;
+                sorted.forEach(t=>{
+                    const d = parseDate(t);
+                    if (!d) return;
+                    hourMap[d.getHours()] += Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0);
+                });
+                // Hanya jam yang ada transaksi atau rentang 07-22
+                labels = [];
+                values = [];
+                for (let h=0; h<24; h++) {
+                    if (hourMap[h] > 0 || (h>=7 && h<=21)) {
+                        labels.push(`${String(h).padStart(2,'0')}:00`);
+                        values.push(hourMap[h]);
+                    }
                 }
-                if (isNaN(d.getTime())) return;
-
-                // Format Jam:Menit (contoh 14:30)
-                const keyLabel = d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-                const total = Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0);
-
-                datesMap[keyLabel] = (datesMap[keyLabel] || 0) + total;
+            }
+        } else if (this.filterType === 'week') {
+            // MINGGUAN: 7 hari Senin-Minggu
+            const now = new Date();
+            const currentDay = now.getDay();
+            const diffToMonday = (currentDay === 0 ? -6 : 1 - currentDay);
+            const startOfWeek = new Date(now);
+            startOfWeek.setDate(now.getDate() + diffToMonday);
+            startOfWeek.setHours(0,0,0,0);
+            
+            const dayNames = ['Sen','Sel','Rab','Kam','Jum','Sab','Min'];
+            const weekMap = {};
+            for (let i=0;i<7;i++) {
+                const d = new Date(startOfWeek);
+                d.setDate(startOfWeek.getDate()+i);
+                const key = d.toISOString().split('T')[0];
+                weekMap[key] = { label: dayNames[i] + `\n${d.getDate()}/${d.getMonth()+1}`, value: 0, date: d };
+            }
+            sorted.forEach(t=>{
+                const d = parseDate(t);
+                if (!d) return;
+                const key = d.toISOString().split('T')[0];
+                if (weekMap[key]) weekMap[key].value += Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0);
             });
-        } else {
-            // Mode selain hari ini (Mingguan, Bulanan, Tahunan): kelompokkan per tanggal
-            sortedFiltered.forEach(t => {
-                const timeStr = t.createdAt || t.timestamp || t.waktu;
-                if (!timeStr) return;
-
-                let d = new Date(timeStr);
-                if (isNaN(d.getTime()) && !isNaN(Number(timeStr))) {
-                    d = new Date(Number(timeStr));
+            labels = Object.values(weekMap).map(v=>v.label);
+            values = Object.values(weekMap).map(v=>v.value);
+        } else if (this.filterType === 'month') {
+            // BULANAN: per tanggal 1-31
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = now.getMonth();
+            const daysInMonth = new Date(year, month+1, 0).getDate();
+            const monthMap = {};
+            for (let d=1; d<=daysInMonth; d++) monthMap[d]=0;
+            sorted.forEach(t=>{
+                const dt = parseDate(t);
+                if (!dt) return;
+                if (dt.getMonth()===month && dt.getFullYear()===year) {
+                    monthMap[dt.getDate()] += Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0);
                 }
-                if (isNaN(d.getTime())) return;
-
-                const keyLabel = d.toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit' });
-                const total = Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0);
-
-                datesMap[keyLabel] = (datesMap[keyLabel] || 0) + total;
             });
+            // Tampilkan hanya yang ada data + label ringkas
+            labels = Object.keys(monthMap).map(d=> `${d}`);
+            values = Object.values(monthMap);
+            // Jika terlalu banyak (31), tetap tampilkan semua tapi font kecil
+        } else if (this.filterType === 'year') {
+            // TAHUNAN: per bulan Jan-Des
+            const monthNames = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+            const yearMap = {};
+            monthNames.forEach((_,i)=> yearMap[i]=0);
+            sorted.forEach(t=>{
+                const d = parseDate(t);
+                if (!d) return;
+                yearMap[d.getMonth()] += Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0);
+            });
+            labels = monthNames;
+            values = monthNames.map((_,i)=> yearMap[i]);
+        } else if (this.filterType === 'custom') {
+            // CUSTOM: per hari dalam range
+            if (!this.customStartDate || !this.customEndDate) {
+                // fallback per tanggal
+                const dayMap = {};
+                sorted.forEach(t=>{
+                    const d = parseDate(t);
+                    if (!d) return;
+                    const key = d.toLocaleDateString('id-ID',{day:'2-digit',month:'2-digit'});
+                    dayMap[key] = (dayMap[key]||0) + Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0);
+                });
+                labels = Object.keys(dayMap);
+                values = Object.values(dayMap);
+            } else {
+                const start = new Date(this.customStartDate);
+                const end = new Date(this.customEndDate);
+                const dayMap = {};
+                const cur = new Date(start);
+                while (cur <= end) {
+                    const key = cur.toISOString().split('T')[0];
+                    dayMap[key] = { label: cur.toLocaleDateString('id-ID',{day:'2-digit',month:'2-digit'}), value:0 };
+                    cur.setDate(cur.getDate()+1);
+                }
+                sorted.forEach(t=>{
+                    const d = parseDate(t);
+                    if (!d) return;
+                    const key = d.toISOString().split('T')[0];
+                    if (dayMap[key]) dayMap[key].value += Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0);
+                });
+                labels = Object.values(dayMap).map(v=>v.label);
+                values = Object.values(dayMap).map(v=>v.value);
+            }
         }
 
-        const allLabels = Object.keys(datesMap);
-        const labels = allLabels.slice(-12); // Ambil hingga 12 titik terakhir agar tampilan responsif
-        const values = labels.map(lbl => datesMap[lbl]);
+        // Bersihkan canvas (pakai ukuran display, bukan DPR)
+        ctx.clearRect(0,0,width,height);
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        // Jika data kosong
-        if (labels.length === 0) {
+        if (labels.length === 0 || values.every(v=>v===0)) {
             ctx.fillStyle = '#94a3b8';
             ctx.font = '12px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText('Tidak ada data grafik transaksi', canvas.width / 2, canvas.height / 2);
+            ctx.fillText(this.filterType==='today' ? 'Belum ada transaksi hari ini' : 'Tidak ada data grafik untuk periode ini', width/2, height/2);
             return;
         }
 
+        // Jika monthly 31 hari, tampilkan slice agar tidak terlalu padat tapi tetap semua bisa di-scroll? Kita tampilkan semua 31
+        // Untuk today per transaksi >12, kita sudah agregasi per jam
+
         const maxVal = Math.max(...values, 1);
         const paddingLeft = 45;
-        const paddingRight = 35;
-        const paddingTop = 30;
-        const paddingBottom = 30;
+        const paddingRight = 15;
+        const paddingTop = 25;
+        const paddingBottom = 45; // lebih tinggi untuk label 2 baris
 
-        const chartWidth = canvas.width - (paddingLeft + paddingRight);
-        const chartHeight = canvas.height - (paddingTop + paddingBottom);
+        const chartWidth = width - (paddingLeft + paddingRight);
+        const chartHeight = height - (paddingTop + paddingBottom);
 
-        // Garis Grid Dasar / Sumbu X
-        ctx.beginPath();
-        ctx.strokeStyle = '#e2e8f0';
+        // Grid horizontal
+        ctx.strokeStyle = '#f1f5f9';
         ctx.lineWidth = 1;
-        ctx.moveTo(paddingLeft, canvas.height - paddingBottom);
-        ctx.lineTo(canvas.width - paddingRight, canvas.height - paddingBottom);
+        for (let i=0;i<=4;i++) {
+            const y = paddingTop + (i * chartHeight/4);
+            ctx.beginPath();
+            ctx.moveTo(paddingLeft, y);
+            ctx.lineTo(width - paddingRight, y);
+            ctx.stroke();
+            // label Y
+            const val = Math.round(maxVal - (i * maxVal/4));
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '9px sans-serif';
+            ctx.textAlign = 'right';
+            let valLabel = val >= 1000000 ? (val/1000000).toFixed(1)+'M' : val>=1000 ? Math.round(val/1000)+'k' : val;
+            ctx.fillText(valLabel, paddingLeft-5, y+3);
+        }
+
+        // Sumbu X garis
+        ctx.beginPath();
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 1;
+        ctx.moveTo(paddingLeft, height - paddingBottom);
+        ctx.lineTo(width - paddingRight, height - paddingBottom);
         ctx.stroke();
 
-        // Titik koordinat
         const points = labels.map((label, idx) => {
             let x;
-            if (labels.length === 1) {
-                x = paddingLeft + (chartWidth / 2);
-            } else {
-                x = paddingLeft + (idx * (chartWidth / (labels.length - 1)));
-            }
-            const y = (canvas.height - paddingBottom) - ((values[idx] / maxVal) * chartHeight);
+            if (labels.length === 1) x = paddingLeft + chartWidth/2;
+            else x = paddingLeft + (idx * (chartWidth / (labels.length - 1 || 1)));
+            const y = (height - paddingBottom) - ((values[idx] / maxVal) * chartHeight);
             return { x, y, val: values[idx], label };
         });
 
-        // Area Gradien Warna Bawah Grafis
+        // Area gradient
         if (points.length > 0) {
             ctx.beginPath();
-            ctx.moveTo(points[0].x, canvas.height - paddingBottom);
-            points.forEach(p => ctx.lineTo(p.x, p.y));
-            ctx.lineTo(points[points.length - 1].x, canvas.height - paddingBottom);
+            ctx.moveTo(points[0].x, height - paddingBottom);
+            points.forEach(p=> ctx.lineTo(p.x, p.y));
+            ctx.lineTo(points[points.length-1].x, height - paddingBottom);
             ctx.closePath();
-
-            const gradient = ctx.createLinearGradient(0, paddingTop, 0, canvas.height - paddingBottom);
-            gradient.addColorStop(0, 'rgba(37, 99, 235, 0.25)');
-            gradient.addColorStop(1, 'rgba(37, 99, 235, 0.0)');
+            const gradient = ctx.createLinearGradient(0, paddingTop, 0, height - paddingBottom);
+            gradient.addColorStop(0, 'rgba(37,99,235,0.25)');
+            gradient.addColorStop(1, 'rgba(37,99,235,0)');
             ctx.fillStyle = gradient;
             ctx.fill();
         }
 
-        // Garis Tren
+        // Garis tren
         if (points.length > 1) {
             ctx.beginPath();
             ctx.strokeStyle = '#2563eb';
             ctx.lineWidth = 2.5;
-
-            points.forEach((p, idx) => {
-                if (idx === 0) ctx.moveTo(p.x, p.y);
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            points.forEach((p, idx)=>{
+                if (idx===0) ctx.moveTo(p.x, p.y);
                 else ctx.lineTo(p.x, p.y);
             });
             ctx.stroke();
         }
 
-        // Titik Bulat & Teks Angka Penjualan
-        points.forEach(p => {
+        // Titik & label
+        points.forEach((p, idx) => {
+            // Hanya gambar titik jika value >0 atau jumlah label tidak terlalu banyak
+            if (labels.length > 25 && p.val===0) return; // skip titik 0 jika padat
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
-            ctx.fillStyle = '#ffffff';
+            ctx.arc(p.x, p.y, p.val>0 ? 4 : 2, 0, Math.PI*2);
+            ctx.fillStyle = p.val>0 ? '#ffffff' : '#e2e8f0';
             ctx.fill();
-            ctx.strokeStyle = '#2563eb';
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = p.val>0 ? '#2563eb' : '#cbd5e1';
+            ctx.lineWidth = p.val>0 ? 2 : 1;
             ctx.stroke();
 
-            // Label Sumbu X (Jam / Tanggal)
+            // Label X - handle multi-line (mingguan)
             ctx.fillStyle = '#64748b';
-            ctx.font = '10px sans-serif';
+            ctx.font = labels.length>15 ? '8px sans-serif' : '10px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText(p.label, p.x, canvas.height - 10);
+            if (p.label.includes('\n')) {
+                const parts = p.label.split('\n');
+                ctx.fillText(parts[0], p.x, height - paddingBottom + 12);
+                ctx.fillText(parts[1], p.x, height - paddingBottom + 23);
+            } else {
+                // Untuk monthly, tampilkan colek setiap 2 label jika terlalu padat
+                if (labels.length>15 && idx%2===1) return;
+                ctx.fillText(p.label, p.x, height - 10);
+            }
 
-            // Label Nilai Nominal Omset
-            let valLabel = p.val >= 1000000 ? (p.val / 1000000).toFixed(1) + 'M' : 
-                           p.val >= 1000 ? Math.round(p.val / 1000) + 'k' : p.val;
-            ctx.fillStyle = '#0f172a';
-            ctx.font = 'bold 9px sans-serif';
-            ctx.fillText(valLabel, p.x, p.y - 8);
+            // Label nilai (hanya jika >0 dan tidak terlalu padat)
+            if (p.val>0 && labels.length <= 20) {
+                let valLabel = p.val >= 1000000 ? (p.val/1000000).toFixed(1)+'M' : p.val>=1000 ? Math.round(p.val/1000)+'k' : p.val;
+                ctx.fillStyle = '#0f172a';
+                ctx.font = 'bold 9px sans-serif';
+                ctx.fillText(valLabel, p.x, p.y - 8);
+            }
         });
+
+        // Judul kecil
+        ctx.fillStyle = '#334155';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'left';
+        const titleMap = { today: 'Per Transaksi / Jam Hari Ini', week: 'Mingguan (Sen-Min)', month: 'Harian Bulan Ini', year: 'Bulanan Tahun Ini', custom: 'Custom Range' };
+        ctx.fillText(titleMap[this.filterType] || '', paddingLeft, 14);
     }
 };
 

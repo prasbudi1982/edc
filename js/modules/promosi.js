@@ -19,6 +19,19 @@ const PromosiModule = {
         this.promotions = await DB.getPromotions() || [];
         this.products = await DB.getProducts() || [];
 
+        // === FIX BERTUMPUK: deduplicate promo berjalan untuk render ===
+        const dedupMap = new Map();
+        const dedupedForRender = [];
+        (this.promotions||[]).forEach(p=>{
+            const c=p.config||{};
+            const key=`${p.type}:${c.targetProdId||c.prodA||c.prodId||c.buyProdId||''}:${c.prodB||c.getProdId||''}`;
+            if(!dedupMap.has(key)){
+                dedupMap.set(key,true);
+                dedupedForRender.push(p);
+            }
+        });
+        const promotionsForRender = dedupedForRender;
+
         if (!this.lastAnalysis) {
             try {
                 this.lastAnalysis = await this.analyzeLaporanData({ silent: true });
@@ -110,12 +123,12 @@ const PromosiModule = {
                 <div class="setting-card" style="padding:10px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                         <h4 style="margin:0; font-size:0.8rem; color:var(--text-primary);">Daftar Promo Berjalan</h4>
-                        <span style="font-size:0.65rem; color:var(--text-secondary); background:var(--bg-card); border:1px solid var(--border-color); padding:2px 6px; border-radius:10px;">${this.promotions.length} aktif</span>
+                        <span style="font-size:0.65rem; color:var(--text-secondary); background:var(--bg-card); border:1px solid var(--border-color); padding:2px 6px; border-radius:10px;">${promotionsForRender.length} aktif</span>
                     </div>
                     
                     ${this.promotions.length ? `
                         <div style="display:flex; flex-direction:column; gap:6px;">
-                        ${this.promotions.map(p => `
+                        ${promotionsForRender.map(p => `
                             <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:8px; display:flex; justify-content:space-between; gap:8px;">
                                 <div style="flex:1; min-width:0;">
                                     <div style="display:flex; gap:5px; align-items:center; flex-wrap:wrap;">
@@ -249,6 +262,23 @@ const PromosiModule = {
         const transactions = await DB.getTransactions() || [];
         const products = await DB.getProducts() || [];
         this.products = products;
+        this.promotions = await DB.getPromotions() || [];
+        const promoIndex = new Map();
+        this.promotions.forEach(p=>{
+            const c=p.config||{};
+            const pids=[c.targetProdId,c.prodA,c.prodId,c.buyProdId,c.getProdId,c.prodB].filter(Boolean).map(String);
+            pids.forEach(pid=>promoIndex.set(`${p.type}:${pid}`, true));
+            if(c.prodA && c.prodB) promoIndex.set(`${p.type}:${c.prodA}+${c.prodB}`, true);
+        });
+        const alreadyHasPromo = (type, prodIds) => {
+            for(const pid of prodIds){
+                if(promoIndex.has(`${type}:${pid}`)) return true;
+            }
+            if(prodIds.length===2){
+                if(promoIndex.has(`${type}:${prodIds[0]}+${prodIds[1]}`)) return true;
+            }
+            return false;
+        };
         const now = new Date();
         const periodCfg = this.getPeriodConfig();
         const periodDays = periodCfg.days;
@@ -303,10 +333,80 @@ const PromosiModule = {
         countSales(recentTrx, soldQtyMap30);
         countSales(sixtyDaysTrx, soldQtyMap60);
         const suggestions = [];
-        let totalDeadStock = 0, totalOverstock = 0, totalSlow = 0, totalHighMargin = 0;
+        let totalDeadStock = 0, totalOverstock = 0, totalSlow = 0, totalHighMargin = 0, totalExpired = 0;
+        const expiredList = products.filter(p=>{
+            const info = this.getProductExpiredInfo(p);
+            const stock = this.getProductStock(p);
+            return info.isPriority && stock>0;
+        }).sort((a,b)=>this.getProductExpiredInfo(a).daysToExpired - this.getProductExpiredInfo(b).daysToExpired);
+        expiredList.forEach(p=>{
+            const pid = String(p.docId||p.id||'');
+            if(alreadyHasPromo('tebus_murah',[pid, String(p.id||p.docId)])) return;
+            const stock = this.getProductStock(p);
+            const cost = this.getProductCost(p);
+            const price = this.getProductPrice(p);
+            const expInfo = this.getProductExpiredInfo(p);
+            totalExpired++;
+            const priceBalikModal = Math.round(cost);
+            const cross = this.calculateCrossSubsidyProfit('tebus_murah', {minSpend:50000, targetProdId:pid, discountPrice:priceBalikModal}, {targetProd:p});
+            if (cross.isAccumulatedProfitable) {
+                suggestions.push({
+                    id: 'AUTO-EXP-TEBUS-'+pid,
+                    rule: 'EXPIRED_CLEARANCE',
+                    priority: 100,
+                    status: 'suggested',
+                    confidence: expInfo.isExpired?100:95,
+                    productIds: [pid],
+                    productNames: [p.name||p.nama||pid],
+                    promoType: 'tebus_murah',
+                    promoName: `${expInfo.isExpired?'EXPIRED':'Near Exp'} Tebus - ${p.name} (${expInfo.label})`,
+                    config: {minSpend:50000, targetProdId:p.id||p.docId, discountPrice:priceBalikModal},
+                    reason: `${expInfo.label}, stok ${stock}. Balik modal Rp${priceBalikModal.toLocaleString()} - Cross subsidi untung Rp${cross.accumulatedProfit.toLocaleString()}`,
+                    estimasi: `Selamatkan modal Rp${(stock*cost).toLocaleString()}`,
+                    autoReason: expInfo.label,
+                    isExpiredPromo: true
+                });
+            }
+            const topLaris = products.filter(o=>{
+                if (String(o.docId||o.id)===pid) return false;
+                if (this.getProductStock(o) <= this.getProductMinStock(o)) return false;
+                if (this.getProductExpiredInfo(o).isPriority) return false;
+                return true;
+            }).sort((a,b)=>(soldQtyMap30[String(b.docId||b.id)]||0)-(soldQtyMap30[String(a.docId||a.id)]||0))[0];
+            if (topLaris) {
+                if(alreadyHasPromo('bundling',[pid, String(topLaris.id||topLaris.docId)])) return;
+                const costBundle = cost + this.getProductCost(topLaris);
+                const bundlePrice = Math.round(costBundle);
+                suggestions.push({
+                    id: `AUTO-EXP-BUNDLE-${pid}-${topLaris.id||topLaris.docId}`,
+                    rule: 'EXPIRED_BUNDLE',
+                    priority: 99,
+                    status: 'suggested',
+                    confidence: 90,
+                    productIds: [pid, String(topLaris.docId||topLaris.id)],
+                    productNames: [p.name, topLaris.name],
+                    promoType: 'bundling',
+                    promoName: `Bundle Clearance ${p.name} + ${topLaris.name}`,
+                    config: {prodA:p.id||p.docId, prodB:topLaris.id||topLaris.docId, bundlePrice:bundlePrice},
+                    reason: `Clearance ${expInfo.label}. Bundle balik modal Rp${bundlePrice.toLocaleString()}`,
+                    estimasi: `Habiskan expired`,
+                    autoReason: 'Expired+Lariss',
+                    isExpiredPromo: true
+                });
+            }
+        });
+
         products.forEach(p => {
+            const expCheck = this.getProductExpiredInfo(p);
+            if (expCheck.isPriority) return;
             const pid = String(p.docId || p.id || '');
+            if(alreadyHasPromo('tebus_murah',[pid]) || alreadyHasPromo('weekend',[pid]) || alreadyHasPromo('bundling',[pid])) return;
+
             const stock = Number(p.stock ?? p.stok ?? 0) || 0;
+            const minStock = Number(p.minStock ?? p.min_stock ?? 5) || 5;
+            if (stock <= 0 || stock <= minStock) {
+                return;
+            }
             const price = Number(p.price ?? p.hargaJual ?? 0) || 0;
             const cost = Number(p.costPrice ?? p.cogs ?? p.buyPrice ?? p.hargaBeli ?? p.modal ?? p.cost ?? p.hpp ?? 0) || 0;
             const margin = price > 0 ? (price - cost) / price : 0;
@@ -595,6 +695,19 @@ const PromosiModule = {
     },
 
     renderInsightSummary() {
+        // === FIX BERTUMPUK: deduplicate promo berjalan untuk render ===
+        const dedupMap = new Map();
+        const dedupedForRender = [];
+        (this.promotions||[]).forEach(p=>{
+            const c=p.config||{};
+            const key=`${p.type}:${c.targetProdId||c.prodA||c.prodId||c.buyProdId||''}:${c.prodB||c.getProdId||''}`;
+            if(!dedupMap.has(key)){
+                dedupMap.set(key,true);
+                dedupedForRender.push(p);
+            }
+        });
+        const promotionsForRender = dedupedForRender;
+
         if (!this.lastAnalysis) {
             return `<div style="grid-column:span 4; text-align:center; padding:8px; border:1px dashed var(--border-color); border-radius:8px; color:var(--text-secondary); font-size:0.7rem;">Belum scan. Klik Scan.</div>`;
         }
@@ -656,6 +769,19 @@ const PromosiModule = {
     async applySuggestion(suggestionId, silent = false) {
         const s = this.autoSuggestions.find(x => x.id === suggestionId);
         if (!s) return;
+        this.promotions = await DB.getPromotions() || [];
+        const exists = this.promotions.some(p=>{
+            const c=p.config||{}; const sc=s.config||{};
+            if(p.type!==s.promoType) return false;
+            const pPids=[c.targetProdId,c.prodA,c.prodId,c.buyProdId].filter(Boolean).map(String);
+            const sPids=[sc.targetProdId,sc.prodA,sc.prodId,sc.buyProdId].filter(Boolean).map(String);
+            return pPids.some(pid=>sPids.includes(pid));
+        });
+        if(exists){
+            if(!silent) alert(`Promo sudah ada, skip: ${s.promoName}`);
+            this.autoSuggestions = this.autoSuggestions.filter(x => x.id !== suggestionId);
+            return;
+        }
         const promoData = {
             name: s.promoName,
             type: s.promoType,
@@ -689,7 +815,26 @@ const PromosiModule = {
     renderConfigFields() {
         const type = document.getElementById('promo-type').value;
         const container = document.getElementById('promo-config-area');
-        const opts = this.products.map(p => `<option value="${p.id || p.docId}">${p.name || p.nama} - Rp ${Number(p.price || p.hargaJual || 0).toLocaleString()}</option>`).join('');
+        const getStockStatus = (p) => {
+            const stok = Number(p.stock ?? p.stok ?? 0);
+            const min = Number(p.minStock ?? p.min_stock ?? 5);
+            if (stok <= 0) return { label: 'HABIS', disabled: true, isLow: true };
+            if (stok <= min) return { label: `MENIPIS (sisa ${stok}, min ${min})`, disabled: true, isLow: true };
+            return { label: `Stok ${stok}`, disabled: false, isLow: false };
+        };
+        const opts = this.products.map(p => {
+            const status = getStockStatus(p);
+            return `<option value="${p.id || p.docId}" ${status.disabled ? 'disabled style="color:#999;background:#f5f5f5;"' : ''}>${p.name || p.nama} - Rp ${Number(p.price || p.hargaJual || 0).toLocaleString()} ${status.disabled ? ' ['+status.label+']' : ''}</option>`;
+        }).join('');
+        const optsAvailable = this.products.filter(p => {
+            const stok = Number(p.stock ?? p.stok ?? 0);
+            const min = Number(p.minStock ?? p.min_stock ?? 5);
+            return stok > min;
+        });
+        if (optsAvailable.length === 0) {
+            container.innerHTML = `<div style="padding:10px; background:#fef2f2; border:1px solid #fca5a5; border-radius:6px; color:#dc2626; font-size:0.8rem;">⚠️ Semua produk stok menipis/habis, tidak bisa buat promo. Restok dulu!</div>`;
+            return;
+        }
         if (type === 'tebus_murah') {
             container.innerHTML = `
                 <label style="font-size:0.7rem; color:var(--text-secondary);">Min. Belanja</label>
@@ -732,27 +877,44 @@ const PromosiModule = {
         const name = document.getElementById('promo-name').value.trim();
         const type = document.getElementById('promo-type').value;
         if (!name) return alert('Nama promo wajib diisi!');
+        // Helper cek stok menipis/habis
+        const isStockLow = (prodId) => {
+            const prod = this.products.find(p => String(p.id || p.docId) === String(prodId));
+            if (!prod) return { low: true, reason: 'Produk tidak ditemukan' };
+            const stok = Number(prod.stock ?? prod.stok ?? 0);
+            const min = Number(prod.minStock ?? prod.min_stock ?? 5);
+            if (stok <= 0) return { low: true, reason: `Stok ${prod.name || prod.nama} HABIS (0)` };
+            if (stok <= min) return { low: true, reason: `Stok ${prod.name || prod.nama} MENIPIS (sisa ${stok}, minimal ${min}) - tidak bisa untuk promo` };
+            return { low: false };
+        };
         let config = {};
         if (type === 'tebus_murah') {
             const targetProdId = document.getElementById('cfg-target-prod').value;
             if (!targetProdId) return alert('Pilih produk!');
+            const check = isStockLow(targetProdId);
+            if (check.low) return alert('❌ ' + check.reason);
             config = { minSpend: Number(document.getElementById('cfg-min-spend').value) || 0, targetProdId, discountPrice: Number(document.getElementById('cfg-discount-price').value) || 0 };
         } else if (type === 'bundling') {
             const prodA = document.getElementById('cfg-prod-a').value;
             const prodB = document.getElementById('cfg-prod-b').value;
             if (!prodA || !prodB) return alert('Pilih A dan B!');
             if (prodA === prodB) return alert('A dan B tidak boleh sama!');
+            const checkA = isStockLow(prodA); if (checkA.low) return alert('❌ Produk A: ' + checkA.reason);
+            const checkB = isStockLow(prodB); if (checkB.low) return alert('❌ Produk B: ' + checkB.reason);
             config = { prodA, prodB, bundlePrice: Number(document.getElementById('cfg-bundle-price').value) || 0 };
         } else if (type === 'buy_x_get_y') {
             const buyProdId = document.getElementById('cfg-buy-prod').value;
             const getProdId = document.getElementById('cfg-get-prod').value;
             if (!buyProdId || !getProdId) return alert('Pilih X dan Y!');
+            const checkBuy = isStockLow(buyProdId); if (checkBuy.low) return alert('❌ Beli X: ' + checkBuy.reason);
+            const checkGet = isStockLow(getProdId); if (checkGet.low) return alert('❌ Gratis Y: ' + checkGet.reason + ' (produk gratis harus stok aman)');
             config = { buyProdId, buyQty: Number(document.getElementById('cfg-buy-qty').value) || 1, getProdId, getQty: Number(document.getElementById('cfg-get-qty').value) || 1 };
         } else if (type === 'tiered_spend') {
             config = { minSpend: Number(document.getElementById('cfg-tier-min').value) || 0, discount: Number(document.getElementById('cfg-tier-disc').value) || 0 };
         } else if (type === 'weekend') {
             const prodId = document.getElementById('cfg-weekend-prod').value;
             if (!prodId) return alert('Pilih produk!');
+            const check = isStockLow(prodId); if (check.low) return alert('❌ ' + check.reason);
             config = { prodId, discount: Number(document.getElementById('cfg-weekend-discount').value) || 0 };
         }
         await DB.savePromotion({ name, type, config, autoGenerated: false, createdAt: new Date().toISOString() });
@@ -796,6 +958,43 @@ const PromosiModule = {
     },
     getProductPrice(p) {
         return Number(p.price ?? p.hargaJual ?? 0) || 0;
+    },
+    getProductStock(p) { return Number(p.stock ?? p.stok ?? 0) || 0; },
+    getProductMinStock(p) { return Number(p.minStock ?? p.min_stock ?? 5) || 5; },
+    getProductExpiredInfo(p) {
+        const expStr = p.expired || p.expired_date || p.expDate || p.tgl_expired || p.expiry;
+        if (!expStr) return { hasExpiry:false, daysToExpired:9999, isExpired:false, isPriority:false, label:'' };
+        let d = new Date(expStr);
+        if (isNaN(d.getTime()) && !isNaN(Number(expStr))) d = new Date(Number(expStr));
+        if (isNaN(d.getTime())) return { hasExpiry:false, daysToExpired:9999, isExpired:false, isPriority:false, label:'' };
+        const now = new Date();
+        const diff = Math.floor((d-now)/(1000*60*60*24));
+        return { hasExpiry:true, expiredDate:d, daysToExpired:diff, isExpired:diff<0, isNearExpired: diff>=0 && diff<=30, isPriority: diff<=60, label: diff<0 ? `EXPIRED ${Math.abs(diff)}h lalu` : `Exp ${diff}h lagi` };
+    },
+    calculateCrossSubsidyProfit(promoType, config, productsInvolved) {
+        if (promoType === 'tebus_murah') {
+            const targetProd = productsInvolved.targetProd;
+            const targetCost = this.getProductCost(targetProd);
+            const discountPrice = Number(config.discountPrice)||0;
+            const minSpend = Number(config.minSpend)||50000;
+            const expiredLoss = discountPrice - targetCost;
+            const normalProfit = minSpend * 0.2;
+            return { expiredLoss, normalProfit, accumulatedProfit: normalProfit + expiredLoss, isAccumulatedProfitable: (normalProfit + expiredLoss) > 0 };
+        } else if (promoType === 'bundling') {
+            const prodA = productsInvolved.prodA; const prodB = productsInvolved.prodB;
+            const totalCost = this.getProductCost(prodA)+this.getProductCost(prodB);
+            const bundlePrice = Number(config.bundlePrice)||0;
+            const profit = bundlePrice - totalCost;
+            return { accumulatedProfit: profit, isAccumulatedProfitable: profit >= totalCost * -0.1 };
+        } else if (promoType === 'buy_x_get_y') {
+            const buyProd = productsInvolved.buyProd; const getProd = productsInvolved.getProd;
+            const buyQty = Number(config.buyQty)||1; const getQty = Number(config.getQty)||1;
+            const totalCost = this.getProductCost(buyProd)*buyQty + this.getProductCost(getProd)*getQty;
+            const totalRevenue = this.getProductPrice(buyProd)*buyQty;
+            const profit = totalRevenue - totalCost;
+            return { accumulatedProfit: profit, isAccumulatedProfitable: profit >= totalCost * -0.5 };
+        }
+        return { accumulatedProfit:0, isAccumulatedProfitable:false };
     },
     // Hitung apakah promo masih untung
     checkProfitability(promoType, config, productsInvolved) {
@@ -929,9 +1128,13 @@ const PromosiModule = {
                         reason = 'Produk tidak ditemukan / sudah dihapus';
                     } else {
                         const stock = Number(prod.stock ?? prod.stok ?? 0);
+                        const min = Number(prod.minStock ?? prod.min_stock ?? 5);
                         if (stock <= 0) {
                             shouldDelete = true;
                             reason = `Stok habis (0)`;
+                        } else if (stock <= min) {
+                            shouldDelete = true;
+                            reason = `Stok menipis (sisa ${stock}, min ${min}) - promo dinonaktifkan`;
                         }
                     }
                 }

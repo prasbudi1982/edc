@@ -5,6 +5,41 @@ import DB from './db.js';
 const TransaksiModule = {
     cart: [],
     products: [],
+
+    // === CEK EXPIRED - JANGAN IJINKAN KE KERANJANG ===
+    isProductExpired(p) {
+        if (!p) return false;
+        const expStr = p.expired || p.expired_date || p.expDate || p.tgl_expired || p.expiry || p.tglExpired || p.exp || p.expiredDate || p.tanggal_expired;
+        if (!expStr) return false;
+        let d = new Date(expStr);
+        if (isNaN(d.getTime()) && !isNaN(Number(expStr))) d = new Date(Number(expStr));
+        if (isNaN(d.getTime())) {
+            const str = String(expStr).trim();
+            const m = str.match(/^(\d{1,2})[-/\s](\d{1,2})[-/\s](\d{2,4})$/);
+            if (m) {
+                const day = parseInt(m[1],10);
+                const month = parseInt(m[2],10)-1;
+                let year = parseInt(m[3],10);
+                if (year < 100) year += 2000;
+                d = new Date(year, month, day);
+            }
+        }
+        if (isNaN(d.getTime())) return false;
+        const now = new Date();
+        now.setHours(0,0,0,0);
+        d.setHours(0,0,0,0);
+        return d < now; // expired jika tanggal < hari ini
+    },
+
+    getExpiredLabel(p) {
+        const expStr = p.expired || p.expired_date || p.expDate || p.tgl_expired || p.expiry || p.tglExpired || p.exp || p.expiredDate || p.tanggal_expired;
+        if (!expStr) return '';
+        let d = new Date(expStr);
+        if (isNaN(d.getTime()) && !isNaN(Number(expStr))) d = new Date(Number(expStr));
+        if (isNaN(d.getTime())) return '';
+        return d.toLocaleDateString('id-ID', {day:'2-digit', month:'short', year:'numeric'});
+    },
+
     promotions: [],
     topProducts: [],
     scannerActive: false,
@@ -142,12 +177,22 @@ const TransaksiModule = {
                 <div style="margin-top:12px;">
                     <small style="font-weight:bold; color:var(--text-secondary);">🔥 Produk Terlaris (Saran):</small>
                     <div class="quick-products" style="margin-top:6px; display:grid; grid-template-columns: repeat(2, 1fr); gap:6px;">
-                        ${this.topProducts.length ? this.topProducts.map(p => `
-                            <button class="product-btn" onclick="TransaksiModule.addItemByProduct('${p.id}')" style="padding:8px; text-align:left; background:var(--bg-card, #fff); border:1px solid var(--border-color, #ccc); border-radius:6px; cursor:pointer;">
-                                <b style="font-size:0.8rem; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${p.name}</b>
-                                <small style="color:var(--text-secondary);">Rp ${Number(p.price).toLocaleString()}</small>
+                        ${this.topProducts.length ? this.topProducts.map(p => {
+                            const stok = Number(p.stock ?? 0);
+                            const minStok = Number(p.minStock ?? p.min_stock ?? 5);
+                            const isHabis = stok <= 0;
+                            const isMenipis = stok > 0 && stok <= minStok;
+                            const isExpired = this.isProductExpired(p);
+                            const disabled = isHabis || isExpired;
+                            return `
+                            <button class="product-btn" ${disabled ? 'disabled' : `onclick="TransaksiModule.addItemByProduct('${p.id}')"`} 
+                                style="padding:8px; text-align:left; background:var(--bg-card, #fff); border:1px solid ${disabled ? (isExpired ? '#991b1b' : '#ef4444') : isMenipis ? '#f59e0b' : 'var(--border-color, #ccc)'}; border-radius:6px; ${disabled ? 'cursor:not-allowed; opacity:0.6;' : 'cursor:pointer;'} position:relative;">
+                                <b style="font-size:0.8rem; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:${disabled || isMenipis ? '55px' : '0'};">${p.name}</b>
+                                <small style="color:var(--text-secondary);">Rp ${Number(p.price).toLocaleString()} | Stok: ${stok}${isExpired ? ` | Exp: ${this.getExpiredLabel(p)}` : ''}</small>
+                                ${isExpired ? `<span style="position:absolute; top:6px; right:6px; background:#991b1b; color:#fff; font-size:0.6rem; padding:2px 5px; border-radius:4px; font-weight:bold;">EXPIRED</span>` : isHabis ? `<span style="position:absolute; top:6px; right:6px; background:#ef4444; color:#fff; font-size:0.6rem; padding:2px 5px; border-radius:4px; font-weight:bold;">HABIS</span>` : isMenipis ? `<span style="position:absolute; top:6px; right:6px; background:#f59e0b; color:#fff; font-size:0.6rem; padding:2px 5px; border-radius:4px; font-weight:bold;">MENIPIS</span>` : ''}
                             </button>
-                        `).join('') : '<p style="grid-column: span 2; font-size:0.75rem; color:var(--text-secondary);">Belum ada data produk terlaris</p>'}
+                            `;
+                        }).join('') : '<p style="grid-column: span 2; font-size:0.75rem; color:var(--text-secondary);">Belum ada data produk terlaris</p>'}
                     </div>
                 </div>
 
@@ -194,16 +239,25 @@ const TransaksiModule = {
         if (matches.length === 0) {
             dropdown.innerHTML = `<div style="padding:8px; font-size:0.75rem; color:#888; text-align:center;">Barang tidak ditemukan</div>`;
         } else {
-            dropdown.innerHTML = matches.map(p => `
-                <div onclick="TransaksiModule.selectSearchProduct('${p.id}')" 
-                     style="padding:8px; border-bottom:1px solid #eee; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">
+            dropdown.innerHTML = matches.map(p => {
+                const stok = Number(p.stock ?? 0);
+                const isHabis = stok <= 0;
+                const isExpired = this.isProductExpired(p);
+                const expLabel = isExpired ? this.getExpiredLabel(p) : '';
+                const disabled = isHabis || isExpired;
+                return `
+                <div onclick="${disabled ? '' : `TransaksiModule.selectSearchProduct('${p.id}')`}" 
+                     style="padding:8px; border-bottom:1px solid #eee; ${disabled ? 'opacity:0.6; background:#fef2f2;' : 'cursor:pointer;'} display:flex; justify-content:space-between; align-items:center;">
                     <div>
-                        <b style="font-size:0.8rem; color:#000;">${p.name}</b><br>
-                        <small style="color:#666; font-size:0.7rem;">SKU/BC: ${p.sku || p.barcode || '-'} | Stok: ${p.stock ?? '-'}</small>
+                        <b style="font-size:0.8rem; color:#000;">${p.name} 
+                            ${isHabis ? '<span style="background:#ef4444; color:#fff; font-size:0.6rem; padding:1px 4px; border-radius:3px;">HABIS</span>' : ''}
+                            ${isExpired ? `<span style="background:#991b1b; color:#fff; font-size:0.6rem; padding:1px 4px; border-radius:3px; margin-left:3px;">EXPIRED ${expLabel}</span>` : ''}
+                        </b><br>
+                        <small style="color:#666; font-size:0.7rem;">SKU/BC: ${p.sku || p.barcode || '-'} | Stok: ${p.stock ?? '-'} ${isExpired ? `| Exp: ${expLabel}` : ''}</small>
                     </div>
-                    <span style="font-weight:bold; font-size:0.8rem; color:var(--accent-color, #007bff);">Rp ${Number(p.price).toLocaleString()}</span>
+                    <span style="font-weight:bold; font-size:0.8rem; color:${disabled ? '#999' : 'var(--accent-color, #007bff)'};">Rp ${Number(p.price).toLocaleString()}</span>
                 </div>
-            `).join('');
+            `}).join('');
         }
 
         dropdown.style.display = 'block';
@@ -630,15 +684,18 @@ const TransaksiModule = {
 
         if (!alreadyApplied) this.appliedPromoIds.push(pid);
 
-        // --- BUG FIX: Selalu tambah barang promo, walaupun sama ---
+        // --- FIX: Cek stok saat tambah barang promo ---
         if (promo.type === 'tebus_murah') {
             if (promo.config.targetProdId) {
                 const prod = this.products.find(p => String(p.id) === String(promo.config.targetProdId));
                 if (prod) {
+                    const stok = Number(prod.stock ?? 0);
+                    if (stok <= 0) { alert(`Stok ${prod.name} habis, promo tidak bisa ditambahkan!`); return window.app.loadModule('transaksi'); }
                     const existing = this.cart.find(c => String(c.prodId) === String(prod.id));
+                    const qtyInCart = existing ? Number(existing.qty) : 0;
+                    if (qtyInCart + 1 > stok) { alert(`Stok ${prod.name} tidak cukup untuk promo! Sisa: ${stok}`); return window.app.loadModule('transaksi'); }
                     if (existing) existing.qty++;
                     else this.cart.push({ prodId: prod.id, name: prod.name, price: Number(prod.price), buyPrice: Number(prod.buyPrice || prod.modal || 0), qty: 1, taxEnabled: !!prod.taxEnabled, taxRate: Number(prod.taxRate ?? prod.taxPercent ?? 11) });
-                    // Track bahwa barang ini ditambahkan oleh promo ini
                     this.promoAddedItems.push({ promoId: pid, prodId: String(prod.id), qty: 1 });
                 }
                 window.app.loadModule('transaksi');
@@ -652,7 +709,11 @@ const TransaksiModule = {
                 if (missingProdId) {
                     const prod = this.products.find(p => String(p.id) === String(missingProdId));
                     if (prod) {
+                        const stok = Number(prod.stock ?? 0);
+                        if (stok <= 0) { alert(`Stok ${prod.name} habis, bundling tidak bisa ditambahkan!`); return window.app.loadModule('transaksi'); }
                         const existing = this.cart.find(c => String(c.prodId) === String(prod.id));
+                        const qtyInCart = existing ? Number(existing.qty) : 0;
+                        if (qtyInCart + 1 > stok) { alert(`Stok ${prod.name} tidak cukup untuk bundling! Sisa: ${stok}`); return window.app.loadModule('transaksi'); }
                         if (existing) existing.qty++;
                         else this.cart.push({ prodId: prod.id, name: prod.name, price: Number(prod.price), buyPrice: Number(prod.buyPrice || prod.modal || 0), qty: 1, taxEnabled: !!prod.taxEnabled, taxRate: Number(prod.taxRate ?? prod.taxPercent ?? 11) });
                         this.promoAddedItems.push({ promoId: pid, prodId: String(prod.id), qty: 1 });
@@ -666,7 +727,11 @@ const TransaksiModule = {
                 const freeQty = Number(promo.config.getQty) || 1;
                 const prod = this.products.find(p => String(p.id) === String(promo.config.getProdId));
                 if (prod) {
+                    const stok = Number(prod.stock ?? 0);
+                    if (stok <= 0) { alert(`Stok ${prod.name} habis, gratis tidak bisa ditambahkan!`); return window.app.loadModule('transaksi'); }
                     const existing = this.cart.find(c => String(c.prodId) === String(prod.id));
+                    const qtyInCart = existing ? Number(existing.qty) : 0;
+                    if (qtyInCart + freeQty > stok) { alert(`Stok ${prod.name} tidak cukup untuk bonus! Sisa: ${stok}, butuh: ${freeQty}`); return window.app.loadModule('transaksi'); }
                     if (existing) existing.qty += freeQty;
                     else this.cart.push({ prodId: prod.id, name: prod.name, price: Number(prod.price), buyPrice: Number(prod.buyPrice || prod.modal || 0), qty: freeQty, taxEnabled: !!prod.taxEnabled, taxRate: Number(prod.taxRate ?? prod.taxPercent ?? 11) });
                     this.promoAddedItems.push({ promoId: pid, prodId: String(prod.id), qty: freeQty });
@@ -707,11 +772,20 @@ const TransaksiModule = {
 
     updateQty(identifier, delta) {
         const item = this.cart.find(i => String(i.prodId) === String(identifier) || i.name === identifier);
-        if (item) {
-            item.qty += delta;
-            if (item.qty <= 0) {
-                this.cart = this.cart.filter(i => (i.prodId ? String(i.prodId) !== String(identifier) : i.name !== identifier));
+        if (!item) return;
+        if (delta > 0 && item.prodId) {
+            const prod = this.products.find(p => String(p.id) === String(item.prodId));
+            if (prod) {
+                const stok = Number(prod.stock ?? 0);
+                if (Number(item.qty) + delta > stok) {
+                    alert(`Stok ${prod.name} tidak cukup! Maks: ${stok}, di keranjang: ${item.qty}`);
+                    return;
+                }
             }
+        }
+        item.qty += delta;
+        if (item.qty <= 0) {
+            this.cart = this.cart.filter(i => (i.prodId ? String(i.prodId) !== String(identifier) : i.name !== identifier));
         }
         window.app.loadModule('transaksi');
     },
@@ -748,6 +822,11 @@ const TransaksiModule = {
     onBarcodeScanned(code) {
         const found = this.products.find(p => p.barcode === code || p.sku === code);
         if (found) {
+            if (this.isProductExpired(found)) {
+                Scanner.releaseProcessing();
+                alert(`❌ Produk ${found.name} sudah EXPIRED (${this.getExpiredLabel(found)}) - tidak bisa ditambahkan ke keranjang!`);
+                return;
+            }
             this.addItemByProduct(found.id);
         } else {
             Scanner.releaseProcessing();
@@ -757,12 +836,57 @@ const TransaksiModule = {
 
     addItemByProduct(prodId) {
         const prod = this.products.find(p => String(p.id) === String(prodId));
-        if (prod) {
-            this.addItem(prod.name, prod.price, prod.id, prod.buyPrice || prod.modal || 0, prod.taxEnabled || false, prod.taxRate ?? prod.taxPercent ?? 11);
+        if (!prod) return;
+        if (this.isProductExpired(prod)) {
+            Scanner.releaseProcessing();
+            alert(`❌ Produk ${prod.name} sudah EXPIRED (${this.getExpiredLabel(prod)}) - tidak bisa ditambahkan ke keranjang!`);
+            return;
         }
+        const stok = Number(prod.stock ?? 0);
+        if (stok <= 0) {
+            Scanner.releaseProcessing();
+            alert(`Stok ${prod.name} habis, tidak bisa ditambahkan ke keranjang!`);
+            return;
+        }
+        const existing = this.cart.find(i => String(i.prodId) === String(prod.id));
+        const qtyInCart = existing ? Number(existing.qty) : 0;
+        if (qtyInCart + 1 > stok) {
+            Scanner.releaseProcessing();
+            alert(`Stok ${prod.name} tidak cukup! Sisa stok: ${stok}, di keranjang: ${qtyInCart}`);
+            return;
+        }
+        this.addItem(prod.name, prod.price, prod.id, prod.buyPrice || prod.modal || 0, prod.taxEnabled || false, prod.taxRate ?? prod.taxPercent ?? 11);
     },
 
     addItem(name, price, prodId = null, buyPrice = 0, taxEnabled = false, taxRate = 11) {
+        // === CEK EXPIRED DULU - JANGAN IJINKAN KE KERANJANG ===
+        if (prodId) {
+            const prod = this.products.find(p => String(p.id) === String(prodId));
+            if (prod && this.isProductExpired(prod)) {
+                Scanner.releaseProcessing();
+                alert(`❌ Produk ${prod.name} sudah EXPIRED (${this.getExpiredLabel(prod)}) - tidak bisa ditambahkan ke keranjang!`);
+                return;
+            }
+        }
+        // Cek stok jika ada prodId
+        if (prodId) {
+            const prod = this.products.find(p => String(p.id) === String(prodId));
+            if (prod) {
+                const stok = Number(prod.stock ?? 0);
+                if (stok <= 0) {
+                    Scanner.releaseProcessing();
+                    alert(`Stok ${prod.name} habis!`);
+                    return;
+                }
+                const existing = this.cart.find(i => (String(i.prodId) === String(prodId)) || i.name === name);
+                const qtyInCart = existing ? Number(existing.qty) : 0;
+                if (qtyInCart + 1 > stok) {
+                    Scanner.releaseProcessing();
+                    alert(`Stok ${prod.name} tidak cukup! Sisa: ${stok}, di keranjang: ${qtyInCart}`);
+                    return;
+                }
+            }
+        }
         const existing = this.cart.find(i => (prodId && String(i.prodId) === String(prodId)) || i.name === name);
         if (existing) {
             existing.qty++;
