@@ -1,6 +1,7 @@
 import Scanner from './scanner.js';
 import Printer from './printer.js';
 import DB from './db.js';
+import Ads from './ads.js';
 
 const TransaksiModule = {
     cart: [],
@@ -90,6 +91,12 @@ const TransaksiModule = {
                         <!-- Dropdown Results Autocomplete -->
                         <div id="search-results-dropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid #ccc; border-radius:6px; box-shadow:0 4px 10px rgba(0,0,0,0.15); max-height:180px; overflow-y:auto; z-index:99; margin-top:4px;">
                         </div>
+                    </div>
+                </div>
+                                <!-- ADS - TANPA LABEL, FULL WIDTH MATCH -->
+                <div id="ads-transaksi-wrapper" style="margin-top:10px; width:100%; box-sizing:border-box; position:relative;">
+                    <div id="ad-160x600" style="width:100%; min-height:90px; display:flex; align-items:center; justify-content:center; border-radius:8px; overflow:hidden; background:transparent;">
+                        <span style="font-size:10px; color:#94a3b8;">Memuat iklan...</span>
                     </div>
                 </div>
 
@@ -362,44 +369,6 @@ const TransaksiModule = {
         window.app.loadModule('transaksi');
     },
 
-    init() {
-        window.TransaksiModule = this;
-
-        document.getElementById('btn-toggle-scanner')?.addEventListener('click', () => this.toggleScanner());
-        document.getElementById('btn-toggle-trans-flash')?.addEventListener('click', () => this.toggleFlashlight());
-
-        // FIX ANTI BLANK HITAM: re-attach kamera jika masih aktif setelah reload
-        if (this.scannerActive) {
-            const mode = localStorage.getItem('edc_scanner_mode') || 'camera';
-            if (mode === 'camera') {
-                setTimeout(() => {
-                    const el = document.getElementById('interactive-scanner');
-                    if (el) {
-                        Scanner.startCamera('interactive-scanner', (code) => this.onBarcodeScanned(code), (hasTorch) => {
-                            const flashBtn = document.getElementById('btn-toggle-trans-flash');
-                            if (flashBtn) flashBtn.disabled = !hasTorch;
-                        });
-                    }
-                }, 200);
-            }
-        }
-
-        document.getElementById('btn-proses-transaksi')?.addEventListener('click', () => {
-            if (this.cart.length === 0) return alert('Keranjang kosong!');
-            this.selectedPaymentMethod = null;
-            this.showPreviewModal = true;
-            window.app.loadModule('transaksi');
-        });
-
-        // Event handler klik di luar dropdown untuk menutup hasil pencarian
-        document.addEventListener('click', (e) => {
-            const dropdown = document.getElementById('search-results-dropdown');
-            const input = document.getElementById('manual-search-input');
-            if (dropdown && input && !input.contains(e.target) && !dropdown.contains(e.target)) {
-                dropdown.style.display = 'none';
-            }
-        });
-    },
 
     closePreviewModal() {
         this.showPreviewModal = false;
@@ -919,6 +888,47 @@ const TransaksiModule = {
     },
 
 
+
+    async init() {
+        window.TransaksiModule = this;
+
+        document.getElementById('btn-toggle-scanner')?.addEventListener('click', () => this.toggleScanner());
+        document.getElementById('btn-toggle-trans-flash')?.addEventListener('click', () => this.toggleFlashlight());
+
+        // FIX ANTI BLANK HITAM: re-attach kamera jika masih aktif setelah reload
+        if (this.scannerActive) {
+            const mode = localStorage.getItem('edc_scanner_mode') || 'camera';
+            if (mode === 'camera') {
+                setTimeout(() => {
+                    const el = document.getElementById('interactive-scanner');
+                    if (el) {
+                        Scanner.startCamera('interactive-scanner', (code) => this.onBarcodeScanned(code), (hasTorch) => {
+                            const flashBtn = document.getElementById('btn-toggle-trans-flash');
+                            if (flashBtn) flashBtn.disabled = !hasTorch;
+                        });
+                    }
+                }, 200);
+            }
+        }
+
+        document.getElementById('btn-proses-transaksi')?.addEventListener('click', () => {
+            if (this.cart.length === 0) return alert('Keranjang kosong!');
+            this.selectedPaymentMethod = null;
+            this.showPreviewModal = true;
+            window.app.loadModule('transaksi');
+        });
+
+        // Event handler klik di luar dropdown untuk menutup hasil pencarian
+        document.addEventListener('click', (e) => {
+            const dropdown = document.getElementById('search-results-dropdown');
+            const input = document.getElementById('manual-search-input');
+            if (dropdown && input && !input.contains(e.target) && !dropdown.contains(e.target)) {
+                dropdown.style.display = 'none';
+            }
+        });
+        // ADS LOAD
+        try { await Ads.loadScript(); } catch(e){ console.warn('Ads skip', e); }
+    },
 
     shareToWhatsApp() {
         if (this.cart.length === 0) return alert('Keranjang masih kosong!');

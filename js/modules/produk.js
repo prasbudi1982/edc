@@ -1,12 +1,14 @@
 import DB from './db.js';
+import Ads from './ads.js';
 import Scanner from './scanner.js';
 
 const ProdukModule = {
     products: [],
     currentPage: 1,
-    itemsPerPage: 5,
+    itemsPerPage: 30,
     sortBy: 'name-asc',
     scannerActive: false,
+    searchQuery: '',
     filterStatus: 'all', // all | baik | near_expired | expired | rusak | opname
     showDisposalLog: false,
 
@@ -116,41 +118,7 @@ const ProdukModule = {
                     </div>
                 </div>
 
-                <!-- === RINGKASAN SORTIR EXPIRED / RUSAK - TEMA SYNC === -->
-                <div class="setting-card" style="margin-top:8px; padding:12px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px;">
-                    ${(() => {
-                        const s = this.getSortirSummary();
-                        return `
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                            <b style="font-size:0.8rem;">📦 Sortir Barang</b>
-                            <span style="font-size:0.65rem; opacity:0.7;">Loss: Rp ${s.totalLoss.toLocaleString('id-ID')}</span>
-                        </div>
-                        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:6px;">
-                            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:8px; text-align:center; cursor:pointer;" onclick="ProdukModule.filterStatus='baik'; window.app.loadModule('produk')">
-                                <div style="font-size:0.65rem; opacity:0.7; color:var(--text-secondary);">Baik</div>
-                                <div style="font-weight:bold; color:#22c55e; font-size:0.9rem;">${s.baik}</div>
-                            </div>
-                            <div style="background:var(--bg-card); border:1px solid #f59e0b; border-left:3px solid #f59e0b; border-radius:8px; padding:8px; text-align:center; cursor:pointer;" onclick="ProdukModule.filterStatus='near_expired'; window.app.loadModule('produk')">
-                                <div style="font-size:0.65rem; color:#f59e0b;">H-30</div>
-                                <div style="font-weight:bold; color:#f59e0b; font-size:0.9rem;">${s.near}</div>
-                            </div>
-                            <div style="background:var(--bg-card); border:1px solid #ef4444; border-left:3px solid #ef4444; border-radius:8px; padding:8px; text-align:center; cursor:pointer;" onclick="ProdukModule.filterStatus='expired'; window.app.loadModule('produk')">
-                                <div style="font-size:0.65rem; color:#ef4444;">Expired</div>
-                                <div style="font-weight:bold; color:#ef4444; font-size:0.9rem;">${s.expired}</div>
-                            </div>
-                            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-left:3px solid #6b7280; border-radius:8px; padding:8px; text-align:center; cursor:pointer; opacity:0.85;" onclick="ProdukModule.filterStatus='rusak'; window.app.loadModule('produk')">
-                                <div style="font-size:0.65rem; color:var(--text-secondary);">Rusak</div>
-                                <div style="font-weight:bold; color:var(--text-color); font-size:0.9rem;">${s.rusak}</div>
-                            </div>
-                        </div>
-                        <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">
-                            <button class="btn-touch" id="btn-auto-sortir" style="flex:1; font-size:0.7rem; padding:6px; background:#f59e0b; color:#fff; border:none; border-radius:6px;">🔍 Sortir Otomatis</button>
-                            <button class="btn-touch" id="btn-disposal-log" style="flex:1; font-size:0.7rem; padding:6px;">📜 Log Buang</button>
-                        </div>
-                        `;
-                    })()}
-                </div>
-
+                
                 <!-- FILTER STATUS -->
                 <div style="display:flex; gap:4px; margin-top:8px; overflow-x:auto; padding-bottom:4px;">
                     ${[
@@ -160,6 +128,13 @@ const ProdukModule = {
                         {id:'expired', label:'Expired'},
                         {id:'rusak', label:'Rusak'},
                     ].map(f=>`<button class="btn-touch ${this.filterStatus===f.id?'active':''}" data-filter="${f.id}" style="font-size:0.7rem; padding:5px 10px; white-space:nowrap;">${f.label}</button>`).join('')}
+                </div>
+
+                <!-- ADS 728x90 PRODUK - FULL WIDTH TANPA LABEL -->
+                <div id="ads-produk-wrapper" style="margin-top:10px; width:100%; box-sizing:border-box; position:relative;">
+                    <div id="ad-produk-728x90" style="width:100%; min-height:90px; display:flex; align-items:center; justify-content:center; border-radius:8px; overflow:hidden; background:transparent;">
+                        <span style="font-size:10px; color:#94a3b8;">Memuat iklan...</span>
+                    </div>
                 </div>
 
                 <div class="setting-card" style="margin-top:8px; padding:8px;">
@@ -277,7 +252,7 @@ const ProdukModule = {
 
                 <div class="setting-card" style="margin-top:8px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <input type="text" id="search-product" class="form-control" placeholder="Cari produk / barcode..." style="flex:1; margin-right:6px;">
+                        <input type="text" id="search-product" class="form-control" placeholder="Cari produk / barcode..." style="flex:1; margin-right:6px;" value="${this.searchQuery || ''}" >
                         <select id="sort-product" class="form-control" style="width:auto; font-size:0.75rem;">
                             <option value="name-asc">Nama A-Z</option>
                             <option value="name-desc">Nama Z-A</option>
@@ -291,9 +266,12 @@ const ProdukModule = {
                             const exp = this.getExpiredInfo(p);
                             const isExp = exp.isExpired;
                             const isNear = exp.isNear;
-                            const isRusak = p.kondisi==='rusak' || p.status==='rusak';
-                            const borderColor = isExp ? '#ef4444' : isRusak ? '#6b7280' : isNear ? '#f59e0b' : 'var(--border-color)';
-                            const bgTint = isExp ? 'rgba(239,68,68,0.06)' : isRusak ? 'rgba(107,114,128,0.08)' : isNear ? 'rgba(245,158,11,0.07)' : 'var(--bg-card)';
+                            const _disposalLogs = (()=>{ try{ return JSON.parse(localStorage.getItem('edc_disposal_logs')||'[]'); }catch(e){ return []; } })();
+                            const hasRusakLog = _disposalLogs.some(l=>String(l.prodId)===String(p.id) && l.type==='rusak');
+                            const hasOpnameLog = p.opnameDiff && p.opnameDiff!==0;
+                            const isRusak = p.kondisi==='rusak' || p.status==='rusak' || hasRusakLog;
+                            const borderColor = isExp ? '#ef4444' : isRusak ? '#6b7280' : hasOpnameLog ? '#8b5cf6' : isNear ? '#f59e0b' : 'var(--border-color)';
+                            const bgTint = isExp ? 'rgba(239,68,68,0.06)' : isRusak ? 'rgba(107,114,128,0.08)' : hasOpnameLog ? 'rgba(139,92,246,0.08)' : isNear ? 'rgba(245,158,11,0.07)' : 'var(--bg-card)';
                             return `
                             <div class="product-item" style="display:flex; justify-content:space-between; align-items:center; padding:10px 8px; margin-bottom:6px; background:${bgTint}; background-color:var(--bg-card); border:1px solid var(--border-color); border-left:3px solid ${borderColor}; border-radius:8px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
                                 <div style="flex:1; min-width:0;">
@@ -302,8 +280,9 @@ const ProdukModule = {
                                         ${p.taxEnabled ? `<span style="font-size:0.6rem; background:var(--accent-color,#ffc107); color:#fff; padding:2px 6px; border-radius:12px;">Pajak ${p.taxRate || p.taxPercent || 11}%</span>` : ''}
                                         ${isExp ? `<span style="font-size:0.6rem; background:#ef4444; color:#fff; padding:3px 7px; border-radius:12px; font-weight:600; letter-spacing:0.3px;">⛔ ${exp.label}</span>` : ''}
                                         ${!isExp && isNear ? `<span style="font-size:0.6rem; background:#f59e0b; color:#fff; padding:3px 7px; border-radius:12px; font-weight:600;">⏰ H-${exp.days}</span>` : ''}
-                                        ${isRusak ? `<span style="font-size:0.6rem; background:var(--bg-secondary); color:var(--text-secondary); border:1px solid var(--border-color); padding:3px 7px; border-radius:12px;">🗑️ RUSAK</span>` : ''}
-                                        ${exp.hasExpiry && !isExp && !isNear ? `<span style="font-size:0.6rem; background:var(--bg-secondary); color:var(--text-secondary); border:1px solid var(--border-color); padding:2px 6px; border-radius:12px;">📅 ${exp.labelDate}</span>` : ''}
+                                        ${isRusak ? `<span style="font-size:0.6rem; background:#6b7280; color:#fff; padding:3px 7px; border-radius:12px; font-weight:600;">🗑️ RUSAK${hasRusakLog && !(p.kondisi==='rusak' || p.status==='rusak') ? ' ('+_disposalLogs.filter(l=>String(l.prodId)===String(p.id) && l.type==='rusak').reduce((s,l)=>s+Number(l.qty||0),0)+' pcs)' : ''}</span>` : ''}
+                                        ${hasOpnameLog ? `<span style="font-size:0.6rem; background:#8b5cf6; color:#fff; padding:3px 7px; border-radius:12px; font-weight:600;">📋 OPNAME ${p.opnameDiff>0?'+':''}${p.opnameDiff}</span>` : ''}
+                                        ${exp.hasExpiry && !isExp && !isNear && !hasRusakLog && !hasOpnameLog ? `<span style="font-size:0.6rem; background:var(--bg-secondary); color:var(--text-secondary); border:1px solid var(--border-color); padding:2px 6px; border-radius:12px;">📅 ${exp.labelDate}</span>` : ''}
                                     </div>
                                     <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px; opacity:0.9;">${p.barcode || '-'} • ${p.category || 'Tanpa Kategori'} • Stok: <b style="color:var(--text-color);">${p.stock}</b> ${p.expiredDate ? '• ED: ' + p.expiredDate : exp.hasExpiry ? '• ED: '+exp.labelDate : ''} ${p.kondisi ? '• '+p.kondisi : ''}</div>
                                     <div style="font-size:0.75rem; color:var(--text-color); margin-top:2px;">Beli: <span style="color:var(--text-secondary);">Rp${(p.buyPrice ?? p.costPrice ?? 0).toLocaleString()}</span> | Jual: <b>Rp${Number(p.price).toLocaleString()}</b></div>
@@ -340,8 +319,8 @@ const ProdukModule = {
                                     <div style="display:flex; gap:4px; flex-wrap:wrap;">
                                         ${!isExp && !isRusak ? `<button class="btn-touch btn-rusak-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:6px;">Rusak</button>` : ''}
                                         ${!isExp && !isRusak ? `<button class="btn-touch btn-expired-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem; background:rgba(239,68,68,0.1); border:1px solid #ef4444; color:#ef4444; border-radius:6px;">Buang</button>` : ''}
-                                        ${isExp || isRusak ? `<button class="btn-touch btn-restore-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem; background:#22c55e; color:#fff; border:none; border-radius:6px;">↩️ Pulihkan</button>` : ''}
-                                        <button class="btn-touch btn-opname-prod" data-id="${p.id}" style="padding:4px 6px; font-size:0.6rem; background:var(--bg-card); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:6px;">📋 Opname</button>
+                                        ${isRusak ? `<button class="btn-touch btn-restore-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem; background:#22c55e; color:#fff; border:none; border-radius:6px;">↩️ Pulihkan</button>` : ''}
+                                        ${!isExp ? `<button class="btn-touch btn-opname-prod" data-id="${p.id}" style="padding:4px 6px; font-size:0.6rem; background:var(--bg-card); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:6px;">📋 Opname</button>` : ''}
                                     </div>
                                 </div>
                             </div>
@@ -445,15 +424,21 @@ const ProdukModule = {
     },
 
     // alias untuk kompatibilitas jika app memanggil init()
-    init() {
+    async init() {
         this.afterRender();
+        try { await Ads.loadScriptProduk(); } catch(e){ console.warn('Ads produk skip', e); }
     },
 
     getSortedProducts() {
         let filtered = [...this.products];
-        const searchVal = document.getElementById('search-product')?.value?.toLowerCase() || '';
+        const searchVal = (this.searchQuery || '').toLowerCase().trim();
         if (searchVal) {
-            filtered = filtered.filter(p => p.name.toLowerCase().includes(searchVal) || (p.barcode && p.barcode.toLowerCase().includes(searchVal)));
+            filtered = filtered.filter(p => {
+                const name = String(p.name || p.nama || p.namaProduk || '').toLowerCase();
+                const barcode = String(p.barcode || p.sku || p.kode || p.code || '').toLowerCase();
+                const cat = String(p.category || p.kategori || '').toLowerCase();
+                return name.includes(searchVal) || barcode.includes(searchVal) || cat.includes(searchVal);
+            });
         }
         switch (this.sortBy) {
             case 'name-asc': return filtered.sort((a,b) => a.name.localeCompare(b.name));
@@ -465,9 +450,72 @@ const ProdukModule = {
         }
     },
 
-    handleSearch(val) {
-        this.currentPage = 1;
-        window.app.loadModule('produk');
+                _searchDebounce: null,
+        handleSearch(val) {
+            clearTimeout(this._searchDebounce);
+            this._searchDebounce = setTimeout(() => {
+                this.searchQuery = (val || '').toLowerCase().trim();
+                this.currentPage = 1;
+                const container = document.getElementById('product-list-container');
+                if(!container){
+                    window.app.loadModule('produk');
+                    return;
+                }
+                const filtered = this.getFilteredProductsForDisplay();
+                const totalPages = Math.ceil(filtered.length / this.itemsPerPage) || 1;
+                const pagInfo = document.querySelector('#product-pagination-info');
+                if(pagInfo) pagInfo.textContent = `Hal ${this.currentPage} dari ${totalPages}`;
+                const pageItems = filtered.slice((this.currentPage - 1) * this.itemsPerPage, this.currentPage * this.itemsPerPage);
+                this.renderProductListOnly(pageItems);
+            }, 180);
+        },
+    renderProductListOnly(pageItems){
+        const container = document.getElementById('product-list-container');
+        if(!container) return;
+        if(pageItems.length===0){
+            container.innerHTML = '<p style="text-align:center; opacity:0.6; padding:12px;">Tidak ada produk untuk filter ini</p>';
+            return;
+        }
+        const html = pageItems.map(p=>{
+            const exp = this.getExpiredInfo(p);
+            const isExp = exp.isExpired || p.status==='expired';
+            const isRusak = p.kondisi==='rusak' || p.status==='rusak';
+            const isOpname = p.opnameDiff && p.opnameDiff!==0;
+            const borderColor = isExp ? '#ef4444' : isRusak ? '#6b7280' : isOpname ? '#8b5cf6' : exp.isNear ? '#f59e0b' : 'var(--border-color)';
+            const bgTint = isExp ? 'rgba(239,68,68,0.06)' : isRusak ? 'rgba(107,114,128,0.08)' : isOpname ? 'rgba(139,92,246,0.08)' : exp.isNear ? 'rgba(245,158,11,0.07)' : 'var(--bg-card)';
+            return `
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; padding:10px 8px; border:1px solid ${borderColor}; border-left:4px solid ${borderColor}; background:${bgTint}; border-radius:8px; margin-bottom:6px; gap:8px;">
+                <div style="flex:1; min-width:0;">
+                    <div style="font-weight:bold; font-size:0.85rem; display:flex; align-items:center; flex-wrap:wrap; gap:4px;">${p.name || p.nama || 'Tanpa Nama'}
+                        ${isExp ? `<span style="font-size:0.6rem; background:#ef4444; color:#fff; padding:3px 7px; border-radius:12px; font-weight:600;">⛔ ${exp.label}</span>` : ''}
+                        ${!isExp && exp.isNear ? `<span style="font-size:0.6rem; background:#f59e0b; color:#fff; padding:3px 7px; border-radius:12px; font-weight:600;">⏰ H-${exp.days}</span>` : ''}
+                        ${isRusak ? `<span style="font-size:0.6rem; background:var(--bg-secondary); color:var(--text-secondary); border:1px solid var(--border-color); padding:3px 7px; border-radius:12px;">🗑️ RUSAK</span>` : ''}
+                        ${isOpname ? `<span style="font-size:0.6rem; background:#8b5cf6; color:#fff; padding:3px 7px; border-radius:12px; font-weight:600;">📋 OPNAME ${p.opnameDiff>0?'+':''}${p.opnameDiff}</span>` : ''}
+                    </div>
+                    <div style="font-size:0.7rem; opacity:0.7; margin-top:2px;">${p.barcode || ''} • ${p.category || p.kategori || ''} • Stok: ${p.stock ?? p.stok ?? 0}${p.expiredDate ? ' • ED: '+ (new Date(p.expiredDate).toISOString().split('T')[0]) : ''}${isOpname ? ` • Selisih: ${p.opnameDiff}` : ''}</div>
+                    <div style="font-size:0.75rem; margin-top:2px;">Beli: Rp${Number(p.costPrice ?? p.modal ?? 0).toLocaleString('id-ID')} | Jual: <b>Rp${Number(p.price ?? p.hargaJual ?? 0).toLocaleString('id-ID')}</b></div>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:4px; min-width:110px;">
+                    <div style="display:flex; gap:4px;">
+                        <button class="btn-touch btn-edit-prod" data-id="${p.id}" style="flex:1; padding:5px 6px; font-size:0.65rem;">✏️ Edit</button>
+                        <button class="btn-touch btn-delete-prod" data-id="${p.id}" style="padding:5px 6px; font-size:0.65rem; border:1px solid #ef4444; color:#ef4444;">🗑️</button>
+                    </div>
+                    <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                        ${!isExp && !isRusak ? `<button class="btn-touch btn-rusak-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem;">Rusak</button>` : ''}
+                        ${!isExp && !isRusak ? `<button class="btn-touch btn-expired-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem; border:1px solid #ef4444; color:#ef4444;">Buang</button>` : ''}
+                        ${isRusak ? `<button class="btn-touch btn-restore-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem; background:#22c55e; color:#fff; border:none;">↩️ Pulihkan</button>` : ''}
+                        ${!isExp ? `<button class="btn-touch btn-opname-prod" data-id="${p.id}" style="padding:4px 6px; font-size:0.6rem;">📋 Opname</button>` : ''}
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+        container.innerHTML = html;
+        container.querySelectorAll('.btn-edit-prod').forEach(btn=> btn.addEventListener('click', (e)=> this.editProduct(e.currentTarget.dataset.id)));
+        container.querySelectorAll('.btn-delete-prod').forEach(btn=> btn.addEventListener('click', (e)=> this.deleteProduct(e.currentTarget.dataset.id)));
+        container.querySelectorAll('.btn-rusak-prod').forEach(btn=> btn.addEventListener('click', (e)=> this.markAsRusak(e.currentTarget.dataset.id)));
+        container.querySelectorAll('.btn-expired-prod').forEach(btn=> btn.addEventListener('click', (e)=> this.markAsExpiredDisposed(e.currentTarget.dataset.id)));
+        container.querySelectorAll('.btn-restore-prod').forEach(btn=> btn.addEventListener('click', (e)=> this.restoreProduct(e.currentTarget.dataset.id)));
+        container.querySelectorAll('.btn-opname-prod').forEach(btn=> btn.addEventListener('click', (e)=> this.opnameProduct(e.currentTarget.dataset.id)));
     },
 
     async saveProduct() {
@@ -819,8 +867,65 @@ const ProdukModule = {
     async restoreProduct(id) {
         const p = this.products.find(x=>String(x.id)===String(id));
         if(!p) return;
-        if(!confirm(`Pulihkan ${p.name} ke status aktif?`)) return;
-        await DB.saveProduct({...p, status:'active', kondisi:'baik', disposal:null});
+        let allLogs = [];
+        try { allLogs = JSON.parse(localStorage.getItem('edc_disposal_logs')||'[]'); } catch(e){ allLogs=[]; }
+        const myRusakLogs = allLogs.filter(l=>String(l.prodId)===String(id) && l.type==='rusak');
+        const hasRusak = p.kondisi==='rusak' || p.status==='rusak' || myRusakLogs.length>0;
+        const hasOpname = p.opnameDiff && p.opnameDiff!==0;
+
+        if(!hasRusak && !hasOpname){
+            alert('Produk sudah baik, tidak ada yang perlu dipulihkan');
+            return;
+        }
+
+        let choice = '3';
+        if(hasRusak && hasOpname){
+            const rusakQty = myRusakLogs.reduce((s,l)=>s+Number(l.qty||0),0);
+            choice = prompt(`Pulihkan ${p.name}\nProduk ini memiliki 2 masalah:\n- RUSAK: ${rusakQty} pcs\n- OPNAME: ${p.opnameDiff>0?'+':''}${p.opnameDiff} pcs\n\nPilih yang mau dipulihkan:\n1 = Rusak saja\n2 = Opname saja\n3 = Keduanya (semua badge hilang)`, '3');
+            if(choice===null) return;
+            choice = String(choice).trim();
+        }else if(hasRusak){
+            const rusakQty = myRusakLogs.reduce((s,l)=>s+Number(l.qty||0),0);
+            if(!confirm(`Pulihkan RUSAK untuk ${p.name}?\n${rusakQty>0 ? rusakQty+' pcs akan dihapus dari log' : ''}\nBadge RUSAK akan hilang.`)) return;
+            choice = '1';
+        }else{
+            if(!confirm(`Pulihkan OPNAME untuk ${p.name}?\nSelisih ${p.opnameDiff>0?'+':''}${p.opnameDiff} akan direset.\nBadge OPNAME akan hilang.`)) return;
+            choice = '2';
+        }
+
+        let updated = {...p};
+        let remainingLogs = [...allLogs];
+
+        if(choice==='1' || choice==='3'){
+            remainingLogs = remainingLogs.filter(l=> !(String(l.prodId)===String(id) && l.type==='rusak'));
+            updated.kondisi = 'baik';
+            updated.status = 'active';
+            updated.disposal = null;
+        }
+        if(choice==='2' || choice==='3'){
+            updated.opnameDiff = 0;
+            updated.lastOpname = null;
+            updated.lastOpnameReason = null;
+            remainingLogs = remainingLogs.filter(l=> !(String(l.prodId)===String(id) && l.type==='opname'));
+            if(choice==='2' && !hasRusak){
+                updated.status = 'active';
+                updated.kondisi = 'baik';
+            }
+        }
+        if(choice==='3'){
+            updated.kondisi = 'baik';
+            updated.status = 'active';
+            updated.disposal = null;
+            updated.opnameDiff = 0;
+            updated.lastOpname = null;
+            updated.lastOpnameReason = null;
+        }
+
+        try { localStorage.setItem('edc_disposal_logs', JSON.stringify(remainingLogs)); } catch(e){}
+        try { if(DB.deleteDisposalLogsByProdId) await DB.deleteDisposalLogsByProdId(id, choice); } catch(e){}
+
+        await DB.saveProduct(updated);
+        alert(`Berhasil dipulihkan: ${p.name} - ${choice==='1'?'Rusak':choice==='2'?'Opname':'Semua'} telah dibersihkan`);
         window.app.loadModule('produk');
     },
 

@@ -1,10 +1,23 @@
 import DB from './db.js';
+import Ads from './ads.js';
 
 if (!window._promosiState) {
     window._promosiState = {
-        detectionPeriod: 'weekly', // harian, mingguan, bulanan - default mingguan
-        lastCleanup: null
+        detectionPeriod: 'weekly',
+        lastCleanup: null,
+        promoCurrentPage: 1,
+        promoPerPage: 10,
+        autoScanMode: 'default', // default = 20, custom = unlimited/custom
+        autoScanLimit: 20,
+        autoScanCustomLimit: null
     };
+}
+// Pastikan property pagination & scan limit ada untuk state lama
+if (window._promosiState) {
+    if (window._promosiState.promoCurrentPage == null) window._promosiState.promoCurrentPage = 1;
+    if (window._promosiState.promoPerPage == null) window._promosiState.promoPerPage = 10;
+    if (window._promosiState.autoScanMode == null) window._promosiState.autoScanMode = 'default';
+    if (window._promosiState.autoScanLimit == null) window._promosiState.autoScanLimit = 20;
 }
 
 const PromosiModule = {
@@ -32,6 +45,21 @@ const PromosiModule = {
         });
         const promotionsForRender = dedupedForRender;
 
+        // === PAGINATION 10 / PAGE ===
+        const perPage = window._promosiState.promoPerPage || 10;
+        let currentPage = window._promosiState.promoCurrentPage || 1;
+        const totalPages = Math.max(1, Math.ceil(promotionsForRender.length / perPage));
+        if (currentPage > totalPages) currentPage = totalPages;
+        if (currentPage < 1) currentPage = 1;
+        window._promosiState.promoCurrentPage = currentPage;
+        const startIdx = (currentPage - 1) * perPage;
+        const paginatedPromos = promotionsForRender.slice(startIdx, startIdx + perPage);
+
+        // === AUTO SCAN MODE INFO ===
+        const scanMode = window._promosiState.autoScanMode || 'default';
+        const scanLimit = scanMode === 'default' ? (window._promosiState.autoScanLimit || 20) : (window._promosiState.autoScanCustomLimit || 0); // 0 = unlimited
+
+
         if (!this.lastAnalysis) {
             try {
                 this.lastAnalysis = await this.analyzeLaporanData({ silent: true });
@@ -47,6 +75,13 @@ const PromosiModule = {
                     <button class="btn-touch active" id="btn-open-add-promo" style="padding:7px 12px; font-size:0.75rem; min-width:90px;">+ Buat Promo</button>
                 </div>
 
+                <!-- ADS 728x90 PROMOSI - FULL WIDTH TANPA LABEL -->
+                <div id="ads-promosi-wrapper" style="margin-top:10px; width:100%; box-sizing:border-box; position:relative;">
+                    <div id="ad-promosi-728x90" style="width:100%; min-height:90px; display:flex; align-items:center; justify-content:center; border-radius:8px; overflow:hidden; background:transparent;">
+                        <span style="font-size:10px; color:#94a3b8;">Memuat iklan...</span>
+                    </div>
+                </div>
+
                 <!-- ================= AUTO DETECT - SELARAS TEMA EDC ================= -->
                 <div class="setting-card" style="border:1px solid var(--border-color); border-left:3px solid var(--accent-color); padding:10px; background:var(--bg-secondary);">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
@@ -55,8 +90,18 @@ const PromosiModule = {
                                 <span style="font-size:0.85rem; font-weight:700; color:var(--text-primary);">Auto Detect</span>
                                 <span style="font-size:0.6rem; padding:2px 6px; border-radius:20px; background:var(--bg-card); color:var(--text-secondary); border:1px solid var(--border-color);">berdasarkan laporan</span>
                                 ${pendingCount ? `<span style="font-size:0.6rem; padding:2px 6px; border-radius:20px; background:var(--danger-color); color:white;">${pendingCount} baru</span>` : ''}
+                                <span style="font-size:0.55rem; padding:2px 6px; border-radius:10px; background:var(--bg-primary); border:1px solid var(--border-color); color:var(--text-secondary);">${scanMode==='default' ? 'Default 20' : (scanLimit>0 ? 'Custom '+scanLimit : 'Unlimited')}</span>
                             </div>
-                            <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:3px; line-height:1.2;">Analisa penjualan & stok untuk rekomendasi promo otomatis</div>
+                            <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:3px; line-height:1.2;">Analisa penjualan & stok untuk rekomendasi promo otomatis (tanpa produk expired)</div>
+                            <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap; align-items:center;">
+                                <div class="option-group" style="margin:0;">
+                                    <button class="btn-touch ${scanMode==='default' ? 'active' : ''}" data-scan-mode="default" id="btn-scan-default" style="font-size:0.65rem; padding:4px 8px;">Default 20</button>
+                                    <button class="btn-touch ${scanMode==='custom' ? 'active' : ''}" data-scan-mode="custom" id="btn-scan-custom" style="font-size:0.65rem; padding:4px 8px;">Custom</button>
+                                </div>
+                                <div id="custom-limit-wrap" style="display:${scanMode==='custom' ? 'flex' : 'none'}; gap:4px; align-items:center;">
+                                    <input type="number" id="input-custom-limit" class="form-control" placeholder="0=unlimited" value="${window._promosiState.autoScanCustomLimit || ''}" style="width:90px; padding:4px 6px; font-size:0.7rem;">
+                                </div>
+                            </div>
                         </div>
                         <button class="btn-touch active" id="btn-auto-scan" style="padding:6px 12px; font-size:0.7rem; white-space:nowrap;">Scan</button>
                     </div>
@@ -119,16 +164,19 @@ const PromosiModule = {
                     </div>
                 </div>
 
-                <!-- Daftar Promo - pakai style sama seperti laporan -->
+                <!-- Daftar Promo - dengan Pagination 10/page -->
                 <div class="setting-card" style="padding:10px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                         <h4 style="margin:0; font-size:0.8rem; color:var(--text-primary);">Daftar Promo Berjalan</h4>
-                        <span style="font-size:0.65rem; color:var(--text-secondary); background:var(--bg-card); border:1px solid var(--border-color); padding:2px 6px; border-radius:10px;">${promotionsForRender.length} aktif</span>
+                        <div style="display:flex; gap:4px; align-items:center;">
+                            <span style="font-size:0.65rem; color:var(--text-secondary); background:var(--bg-card); border:1px solid var(--border-color); padding:2px 6px; border-radius:10px;">${promotionsForRender.length} aktif</span>
+                            <span style="font-size:0.6rem; color:var(--text-secondary);">Hal ${currentPage}/${totalPages}</span>
+                        </div>
                     </div>
                     
-                    ${this.promotions.length ? `
+                    ${promotionsForRender.length ? `
                         <div style="display:flex; flex-direction:column; gap:6px;">
-                        ${promotionsForRender.map(p => `
+                        ${paginatedPromos.map(p => `
                             <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:8px; display:flex; justify-content:space-between; gap:8px;">
                                 <div style="flex:1; min-width:0;">
                                     <div style="display:flex; gap:5px; align-items:center; flex-wrap:wrap;">
@@ -143,6 +191,17 @@ const PromosiModule = {
                             </div>
                         `).join('')}
                         </div>
+                        <!-- Pagination Controls -->
+                        <div style="display:flex; justify-content:center; align-items:center; gap:6px; margin-top:10px; flex-wrap:wrap;">
+                            <button class="btn-touch" id="btn-promo-prev" ${currentPage<=1 ? 'disabled' : ''} style="font-size:0.7rem; padding:5px 10px; ${currentPage<=1 ? 'opacity:0.5;' : ''}">← Prev</button>
+                            <div style="display:flex; gap:3px; align-items:center;">
+                                ${Array.from({length: totalPages}, (_,i)=>i+1).slice(Math.max(0,currentPage-3), Math.min(totalPages, currentPage+2)).map(pageNum => `
+                                    <button class="btn-touch ${pageNum===currentPage ? 'active' : ''}" data-promo-page="${pageNum}" style="font-size:0.7rem; padding:4px 8px; min-width:28px;">${pageNum}</button>
+                                `).join('')}
+                            </div>
+                            <button class="btn-touch" id="btn-promo-next" ${currentPage>=totalPages ? 'disabled' : ''} style="font-size:0.7rem; padding:5px 10px; ${currentPage>=totalPages ? 'opacity:0.5;' : ''}">Next →</button>
+                            <span style="font-size:0.65rem; color:var(--text-secondary); margin-left:4px;">10/page</span>
+                        </div>
                     ` : `
                         <div style="text-align:center; padding:16px; border:1px dashed var(--border-color); border-radius:8px; color:var(--text-secondary); font-size:0.75rem;">
                             Belum ada promo aktif<br><small style="font-size:0.65rem;">Buat manual atau scan auto detect</small>
@@ -153,7 +212,7 @@ const PromosiModule = {
         `;
     },
 
-    init() {
+    async init() {
         window.PromosiModule = this;
 
         document.getElementById('btn-open-add-promo')?.addEventListener('click', () => {
@@ -230,7 +289,49 @@ const PromosiModule = {
             });
         });
 
+        // === Pagination handlers ===
+        document.getElementById('btn-promo-prev')?.addEventListener('click', () => {
+            if (window._promosiState.promoCurrentPage > 1) {
+                window._promosiState.promoCurrentPage--;
+                window.app?.loadModule?.('promosi');
+            }
+        });
+        document.getElementById('btn-promo-next')?.addEventListener('click', () => {
+            window._promosiState.promoCurrentPage++;
+            window.app?.loadModule?.('promosi');
+        });
+        document.querySelectorAll('[data-promo-page]').forEach(btn=>{
+            btn.addEventListener('click', (e)=>{
+                const pg = Number(e.currentTarget.dataset.promoPage);
+                window._promosiState.promoCurrentPage = pg;
+                window.app?.loadModule?.('promosi');
+            });
+        });
+
+        // === Scan mode handlers ===
+        document.querySelectorAll('[data-scan-mode]').forEach(btn=>{
+            btn.addEventListener('click', (e)=>{
+                const mode = e.currentTarget.dataset.scanMode;
+                window._promosiState.autoScanMode = mode;
+                // update UI
+                document.querySelectorAll('[data-scan-mode]').forEach(b=>b.classList.remove('active'));
+                e.currentTarget.classList.add('active');
+                const wrap = document.getElementById('custom-limit-wrap');
+                if (wrap) wrap.style.display = mode==='custom' ? 'flex' : 'none';
+                // tidak auto scan ulang, biar user klik Scan
+            });
+        });
+        document.getElementById('input-custom-limit')?.addEventListener('change', (e)=>{
+            const v = Number(e.target.value);
+            if (!v || v <= 0) {
+                window._promosiState.autoScanCustomLimit = null; // unlimited
+            } else {
+                window._promosiState.autoScanCustomLimit = v;
+            }
+        });
+
         this.initAutoButtons();
+        try { await Ads.loadScriptPromosi(); } catch(e){ console.warn('Ads promosi skip', e); }
     },
 
     initAutoButtons() {
@@ -334,71 +435,19 @@ const PromosiModule = {
         countSales(sixtyDaysTrx, soldQtyMap60);
         const suggestions = [];
         let totalDeadStock = 0, totalOverstock = 0, totalSlow = 0, totalHighMargin = 0, totalExpired = 0;
-        const expiredList = products.filter(p=>{
-            const info = this.getProductExpiredInfo(p);
-            const stock = this.getProductStock(p);
-            return info.isPriority && stock>0;
-        }).sort((a,b)=>this.getProductExpiredInfo(a).daysToExpired - this.getProductExpiredInfo(b).daysToExpired);
-        expiredList.forEach(p=>{
-            const pid = String(p.docId||p.id||'');
-            if(alreadyHasPromo('tebus_murah',[pid, String(p.id||p.docId)])) return;
-            const stock = this.getProductStock(p);
-            const cost = this.getProductCost(p);
-            const price = this.getProductPrice(p);
-            const expInfo = this.getProductExpiredInfo(p);
-            totalExpired++;
-            const priceBalikModal = Math.round(cost);
-            const cross = this.calculateCrossSubsidyProfit('tebus_murah', {minSpend:50000, targetProdId:pid, discountPrice:priceBalikModal}, {targetProd:p});
-            if (cross.isAccumulatedProfitable) {
-                suggestions.push({
-                    id: 'AUTO-EXP-TEBUS-'+pid,
-                    rule: 'EXPIRED_CLEARANCE',
-                    priority: 100,
-                    status: 'suggested',
-                    confidence: expInfo.isExpired?100:95,
-                    productIds: [pid],
-                    productNames: [p.name||p.nama||pid],
-                    promoType: 'tebus_murah',
-                    promoName: `${expInfo.isExpired?'EXPIRED':'Near Exp'} Tebus - ${p.name} (${expInfo.label})`,
-                    config: {minSpend:50000, targetProdId:p.id||p.docId, discountPrice:priceBalikModal},
-                    reason: `${expInfo.label}, stok ${stock}. Balik modal Rp${priceBalikModal.toLocaleString()} - Cross subsidi untung Rp${cross.accumulatedProfit.toLocaleString()}`,
-                    estimasi: `Selamatkan modal Rp${(stock*cost).toLocaleString()}`,
-                    autoReason: expInfo.label,
-                    isExpiredPromo: true
-                });
-            }
-            const topLaris = products.filter(o=>{
-                if (String(o.docId||o.id)===pid) return false;
-                if (this.getProductStock(o) <= this.getProductMinStock(o)) return false;
-                if (this.getProductExpiredInfo(o).isPriority) return false;
-                return true;
-            }).sort((a,b)=>(soldQtyMap30[String(b.docId||b.id)]||0)-(soldQtyMap30[String(a.docId||a.id)]||0))[0];
-            if (topLaris) {
-                if(alreadyHasPromo('bundling',[pid, String(topLaris.id||topLaris.docId)])) return;
-                const costBundle = cost + this.getProductCost(topLaris);
-                const bundlePrice = Math.round(costBundle);
-                suggestions.push({
-                    id: `AUTO-EXP-BUNDLE-${pid}-${topLaris.id||topLaris.docId}`,
-                    rule: 'EXPIRED_BUNDLE',
-                    priority: 99,
-                    status: 'suggested',
-                    confidence: 90,
-                    productIds: [pid, String(topLaris.docId||topLaris.id)],
-                    productNames: [p.name, topLaris.name],
-                    promoType: 'bundling',
-                    promoName: `Bundle Clearance ${p.name} + ${topLaris.name}`,
-                    config: {prodA:p.id||p.docId, prodB:topLaris.id||topLaris.docId, bundlePrice:bundlePrice},
-                    reason: `Clearance ${expInfo.label}. Bundle balik modal Rp${bundlePrice.toLocaleString()}`,
-                    estimasi: `Habiskan expired`,
-                    autoReason: 'Expired+Lariss',
-                    isExpiredPromo: true
-                });
-            }
-        });
+        // === FIX: JANGAN GUNAKAN PRODUK EXPIRED SEBAGAI PROMO ===
+        // Expired list dihapus total sesuai instruksi - tidak boleh jadi promo
+        const expiredList = [];
+        // totalExpired tetap 0 karena tidak dipakai
+        
 
         products.forEach(p => {
             const expCheck = this.getProductExpiredInfo(p);
-            if (expCheck.isPriority) return;
+            // === FIX: JANGAN GUNAKAN PRODUK EXPIRED SEBAGAI PROMO ===
+            if (expCheck.isExpired) return; // expired asli jangan dipakai
+            // Jika ingin lebih ketat: near expired juga jangan (isPriority), tapi sesuai instruksi hanya expired
+            // if (expCheck.isPriority) return; // disabled - hanya isExpired yang di-skip
+            
             const pid = String(p.docId || p.id || '');
             if(alreadyHasPromo('tebus_murah',[pid]) || alreadyHasPromo('weekend',[pid]) || alreadyHasPromo('bundling',[pid])) return;
 
@@ -601,6 +650,8 @@ const PromosiModule = {
                     const prodA = products.find(pr => String(pr.id || pr.docId) === pid || String(pr.docId) === pid);
                     const prodB = products.find(pr => String(pr.id || pr.docId) === otherPid || String(pr.docId) === otherPid);
                     if (!prodA || !prodB) return;
+                    // === FIX: skip jika expired ===
+                    if (this.getProductExpiredInfo(prodA).isExpired || this.getProductExpiredInfo(prodB).isExpired) return;
                     const priceA = Number(prodA.price || prodA.hargaJual || 0);
                     const priceB = Number(prodB.price || prodB.hargaJual || 0);
                     const bundlePrice = Math.round((priceA + priceB) * 0.85);
@@ -656,6 +707,7 @@ const PromosiModule = {
                 if (suggestions.find(s => s.productIds.includes(pid))) return;
                 const prod = products.find(pr => String(pr.id || pr.docId) === pid);
                 if (!prod) return;
+                if (this.getProductExpiredInfo(prod).isExpired) return;
                 suggestions.push({
                     id: 'AUTO-WEEKEND-' + pid,
                     rule: 'WEEKEND_PUSH',
@@ -674,6 +726,22 @@ const PromosiModule = {
             });
         }
         suggestions.sort((a,b) => b.priority - a.priority);
+        // === FIX: AUTO SCAN LIMIT 20 DEFAULT / CUSTOM UNLIMITED ===
+        const mode = window._promosiState.autoScanMode || 'default';
+        const defLimit = window._promosiState.autoScanLimit || 20;
+        const customLimit = window._promosiState.autoScanCustomLimit;
+        if (mode === 'default') {
+            // default 20
+            if (suggestions.length > defLimit) {
+                suggestions.splice(defLimit);
+            }
+        } else {
+            // custom: 0 atau null = unlimited, >0 = limit custom
+            if (customLimit && customLimit > 0 && suggestions.length > customLimit) {
+                suggestions.splice(customLimit);
+            }
+            // jika 0/null = unlimited -> biarkan semua
+        }
         this.autoSuggestions = suggestions;
         this.lastAnalysis = {
             date: new Date().toISOString(),
@@ -816,6 +884,9 @@ const PromosiModule = {
         const type = document.getElementById('promo-type').value;
         const container = document.getElementById('promo-config-area');
         const getStockStatus = (p) => {
+            // === FIX: cek expired ===
+            const expInfo = this.getProductExpiredInfo(p);
+            if (expInfo.isExpired) return { label: `EXPIRED ${expInfo.label}`, disabled: true, isLow: true, isExpired: true };
             const stok = Number(p.stock ?? p.stok ?? 0);
             const min = Number(p.minStock ?? p.min_stock ?? 5);
             if (stok <= 0) return { label: 'HABIS', disabled: true, isLow: true };
@@ -827,6 +898,7 @@ const PromosiModule = {
             return `<option value="${p.id || p.docId}" ${status.disabled ? 'disabled style="color:#999;background:#f5f5f5;"' : ''}>${p.name || p.nama} - Rp ${Number(p.price || p.hargaJual || 0).toLocaleString()} ${status.disabled ? ' ['+status.label+']' : ''}</option>`;
         }).join('');
         const optsAvailable = this.products.filter(p => {
+            if (this.getProductExpiredInfo(p).isExpired) return false;
             const stok = Number(p.stock ?? p.stok ?? 0);
             const min = Number(p.minStock ?? p.min_stock ?? 5);
             return stok > min;
