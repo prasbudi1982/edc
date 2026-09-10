@@ -124,10 +124,17 @@ const TransaksiModule = {
                     </div>
                 ` : ''}
 
+                
+                <style>
+                .cart-list::-webkit-scrollbar { width: 6px; }
+                .cart-list::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+                .cart-list::-webkit-scrollbar-track { background: transparent; }
+                </style>
+
                 <!-- Detail Keranjang -->
                 <div class="cart-summary" style="margin-top:8px; background:var(--bg-card, #fff); padding:10px; border-radius:8px; border:1px solid var(--border-color, #ccc);">
                     <h4 style="margin:0 0 8px 0; font-size:0.9rem;">🛒 Keranjang Belanja</h4>
-                    <div class="cart-list">
+                    <div class="cart-list" style="max-height: 270px; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; scrollbar-width: thin; padding-right: 4px;">
                         ${this.cart.length ? this.cart.map(item => {
                             const lineTotal = item.price * item.qty;
                             const lineTax = item.taxEnabled ? Math.round(lineTotal * (Number(item.taxRate||11)/100)) : 0;
