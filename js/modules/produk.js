@@ -273,19 +273,27 @@ const ProdukModule = {
                             const borderColor = isExp ? '#ef4444' : isRusak ? '#6b7280' : hasOpnameLog ? '#8b5cf6' : isNear ? '#f59e0b' : 'var(--border-color)';
                             const bgTint = isExp ? 'rgba(239,68,68,0.06)' : isRusak ? 'rgba(107,114,128,0.08)' : hasOpnameLog ? 'rgba(139,92,246,0.08)' : isNear ? 'rgba(245,158,11,0.07)' : 'var(--bg-card)';
                             return `
-                            <div class="product-item" style="display:flex; justify-content:space-between; align-items:center; padding:10px 8px; margin-bottom:6px; background:${bgTint}; background-color:var(--bg-card); border:1px solid var(--border-color); border-left:3px solid ${borderColor}; border-radius:8px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
-                                <div style="flex:1; min-width:0;">
-                                    <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
-                                        <strong style="font-size:0.85rem;">${p.name}</strong>
-                                        ${p.taxEnabled ? `<span style="font-size:0.6rem; background:var(--accent-color,#ffc107); color:#fff; padding:2px 6px; border-radius:12px;">Pajak ${p.taxRate || p.taxPercent || 11}%</span>` : ''}
-                                        ${isExp ? `<span style="font-size:0.6rem; background:#ef4444; color:#fff; padding:3px 7px; border-radius:12px; font-weight:600; letter-spacing:0.3px;">⛔ ${exp.label}</span>` : ''}
-                                        ${!isExp && isNear ? `<span style="font-size:0.6rem; background:#f59e0b; color:#fff; padding:3px 7px; border-radius:12px; font-weight:600;">⏰ H-${exp.days}</span>` : ''}
-                                        ${isRusak ? `<span style="font-size:0.6rem; background:#6b7280; color:#fff; padding:3px 7px; border-radius:12px; font-weight:600;">🗑️ RUSAK${hasRusakLog && !(p.kondisi==='rusak' || p.status==='rusak') ? ' ('+_disposalLogs.filter(l=>String(l.prodId)===String(p.id) && l.type==='rusak').reduce((s,l)=>s+Number(l.qty||0),0)+' pcs)' : ''}</span>` : ''}
-                                        ${hasOpnameLog ? `<span style="font-size:0.6rem; background:#8b5cf6; color:#fff; padding:3px 7px; border-radius:12px; font-weight:600;">📋 OPNAME ${p.opnameDiff>0?'+':''}${p.opnameDiff}</span>` : ''}
-                                        ${exp.hasExpiry && !isExp && !isNear && !hasRusakLog && !hasOpnameLog ? `<span style="font-size:0.6rem; background:var(--bg-secondary); color:var(--text-secondary); border:1px solid var(--border-color); padding:2px 6px; border-radius:12px;">📅 ${exp.labelDate}</span>` : ''}
+                            <div class="product-item" style="display:flex; justify-content:space-between; align-items:flex-start; padding:10px 10px; margin-bottom:8px; background:${bgTint}; background-color:var(--bg-card); border:1px solid var(--border-color); border-left:3px solid ${borderColor}; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,0.08); gap:10px;">
+                                <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:5px;">
+                                    <div style="display:flex; align-items:flex-start; gap:6px; flex-wrap:wrap;">
+                                        <strong style="font-size:0.88rem; line-height:1.2; color:var(--text-primary); word-break:break-word;">${p.name}</strong>
+                                        <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
+                                            ${p.taxEnabled ? `<span style="font-size:0.58rem; background:var(--accent-color); color:#fff; padding:2px 6px; border-radius:10px; font-weight:600;">Pajak ${p.taxRate || p.taxPercent || 11}%</span>` : ''}
+                                            ${isExp ? `<span style="font-size:0.58rem; background:var(--danger-color); color:#fff; padding:2px 6px; border-radius:10px; font-weight:600;">⛔ ${exp.label}</span>` : ''}
+                                            ${!isExp && isNear ? `<span style="font-size:0.58rem; background:#f59e0b; color:#fff; padding:2px 6px; border-radius:10px; font-weight:600;">⏰ H-${exp.days}</span>` : ''}
+                                            ${isRusak ? `<span style="font-size:0.58rem; background:#6b7280; color:#fff; padding:2px 6px; border-radius:10px; font-weight:600;">RUSAK${hasRusakLog && !(p.kondisi==='rusak' || p.status==='rusak') ? ' '+_disposalLogs.filter(l=>String(l.prodId)===String(p.id) && l.type==='rusak').reduce((s,l)=>s+Number(l.qty||0),0)+' pcs' : ''}</span>` : ''}
+                                            ${hasOpnameLog ? `<span style="font-size:0.58rem; background:#8b5cf6; color:#fff; padding:2px 6px; border-radius:10px; font-weight:600;">OPNAME ${p.opnameDiff>0?'+':''}${p.opnameDiff}</span>` : ''}
+                                        </div>
                                     </div>
-                                    <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px; opacity:0.9;">${p.barcode || '-'} • ${p.category || 'Tanpa Kategori'} • Stok: <b style="color:var(--text-color);">${p.stock}</b> ${p.expiredDate ? '• ED: ' + p.expiredDate : exp.hasExpiry ? '• ED: '+exp.labelDate : ''} ${p.kondisi ? '• '+p.kondisi : ''}</div>
-                                    <div style="font-size:0.75rem; color:var(--text-color); margin-top:2px;">Beli: <span style="color:var(--text-secondary);">Rp${(p.buyPrice ?? p.costPrice ?? 0).toLocaleString()}</span> | Jual: <b>Rp${Number(p.price).toLocaleString()}</b></div>
+                                    ${exp.hasExpiry && !isExp && !isNear && !hasRusakLog && !hasOpnameLog ? `<div><span style="font-size:0.62rem; background:var(--bg-secondary); color:var(--text-secondary); border:1px solid var(--border-color); padding:2px 7px; border-radius:10px; display:inline-flex; align-items:center; gap:3px;">📅 ${exp.labelDate}</span></div>` : ''}
+                                    <div style="font-size:0.72rem; color:var(--text-secondary); line-height:1.5; display:flex; flex-direction:column; gap:2px; align-items:flex-start; min-width:0;">
+                                        <span style="white-space:nowrap;">ID: ${p.barcode || p.id || '-'}</span>
+                                        <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; color:var(--text-secondary);">Kategori: ${p.category || 'Tanpa Kategori'}</span>
+                                        <span style="white-space:nowrap;">Stok: <b style="color:var(--text-primary);">${p.stock}</b></span>
+                                        ${p.expiredDate || exp.hasExpiry ? `<span style="white-space:nowrap;">ED: ${p.expiredDate ? (isNaN(new Date(p.expiredDate).getTime()) ? p.expiredDate : new Date(p.expiredDate).toISOString().split('T')[0]) : (exp.date ? exp.date.toISOString().split('T')[0] : exp.labelDate)}</span>` : ''}
+                                        <span style="white-space:nowrap;">Beli: <span style="color:var(--text-secondary);">Rp${(p.buyPrice ?? p.costPrice ?? 0).toLocaleString('id-ID')}</span></span>
+                                        <span style="white-space:nowrap;">Jual: <b style="color:var(--text-primary);">Rp${Number(p.price).toLocaleString('id-ID')}</b></span>
+                                    </div>
                                     ${(() => {
                                         // Hitung total rusak dari log (bukan cuma disposal terakhir)
                                         let totalRusakPcs = 0;
@@ -311,17 +319,13 @@ const ProdukModule = {
                                         return '';
                                     })()}
                                 </div>
-                                <div style="display:flex; flex-direction:column; gap:4px; margin-left:8px; min-width:110px;">
-                                    <div style="display:flex; gap:4px;">
-                                        <button class="btn-touch btn-edit-prod" data-id="${p.id}" style="flex:1; padding:5px 6px; font-size:0.65rem; background:var(--bg-card); border:1px solid var(--border-color); color:var(--text-color); border-radius:6px;">✏️ Edit</button>
-                                        <button class="btn-touch btn-delete-prod" data-id="${p.id}" style="padding:5px 6px; font-size:0.65rem; background:transparent; border:1px solid #ef4444; color:#ef4444; border-radius:6px;">🗑️</button>
-                                    </div>
-                                    <div style="display:flex; gap:4px; flex-wrap:wrap;">
-                                        ${!isExp && !isRusak ? `<button class="btn-touch btn-rusak-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:6px;">Rusak</button>` : ''}
-                                        ${!isExp && !isRusak ? `<button class="btn-touch btn-expired-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem; background:rgba(239,68,68,0.1); border:1px solid #ef4444; color:#ef4444; border-radius:6px;">Buang</button>` : ''}
-                                        ${isRusak ? `<button class="btn-touch btn-restore-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem; background:#22c55e; color:#fff; border:none; border-radius:6px;">↩️ Pulihkan</button>` : ''}
-                                        ${!isExp ? `<button class="btn-touch btn-opname-prod" data-id="${p.id}" style="padding:4px 6px; font-size:0.6rem; background:var(--bg-card); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:6px;">📋 Opname</button>` : ''}
-                                    </div>
+                                <div style="display:flex; flex-direction:column; gap:5px; margin-left:6px; min-width:86px; max-width:90px; flex-shrink:0;">
+                                    <button class="btn-touch btn-edit-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.68rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:8px; display:flex; align-items:center; justify-content:center; gap:4px;">✏️ Edit</button>
+                                    <button class="btn-touch btn-delete-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.68rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:8px; display:flex; align-items:center; justify-content:center; gap:4px;">🗑️ Hapus</button>
+                                    ${!isExp && !isRusak ? `<button class="btn-touch btn-rusak-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.65rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:8px;">Rusak</button>` : ''}
+                                    
+                                    ${isRusak ? `<button class="btn-touch btn-restore-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.65rem; font-weight:700; background:var(--success-color); color:#fff; border:1px solid var(--success-color); border-radius:8px;">↩️ Pulihkan</button>` : ''}
+                                    ${!isExp ? `<button class="btn-touch btn-opname-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.65rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:8px;">📋 Opname</button>` : ''}
                                 </div>
                             </div>
                         `}).join('')}
@@ -502,7 +506,7 @@ const ProdukModule = {
                     </div>
                     <div style="display:flex; gap:4px; flex-wrap:wrap;">
                         ${!isExp && !isRusak ? `<button class="btn-touch btn-rusak-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem;">Rusak</button>` : ''}
-                        ${!isExp && !isRusak ? `<button class="btn-touch btn-expired-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem; border:1px solid #ef4444; color:#ef4444;">Buang</button>` : ''}
+                        
                         ${isRusak ? `<button class="btn-touch btn-restore-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem; background:#22c55e; color:#fff; border:none;">↩️ Pulihkan</button>` : ''}
                         ${!isExp ? `<button class="btn-touch btn-opname-prod" data-id="${p.id}" style="padding:4px 6px; font-size:0.6rem;">📋 Opname</button>` : ''}
                     </div>
