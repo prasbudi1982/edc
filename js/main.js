@@ -220,7 +220,8 @@ class Router {
                 const foundOp = operators.find(op => op.id === selectedOpId || op.pin === pinVal);
                 
                 if (foundOp && foundOp.pin === pinVal) {
-                    this.currentUser = foundOp;
+                    // FIX: role belum di set - set role operator secara eksplisit
+                    this.currentUser = { ...foundOp, role: 'operator', id: foundOp.id, name: foundOp.name, pin: foundOp.pin };
                     localStorage.setItem('edc_active_user', JSON.stringify(this.currentUser));
                     modalOverlay.remove();
                     this.initApp();
@@ -237,7 +238,8 @@ class Router {
         this.updateHeaderStore();
         
         let initialModule = this.checkCloudConfig() ? 'transaksi' : 'setting';
-        if (this.currentUser.role === 'kasir') {
+        const r = this.currentUser?.role;
+        if (r === 'kasir' || r === 'operator') {
             initialModule = 'transaksi';
         }
 
@@ -285,7 +287,7 @@ class Router {
             storeName = localStorage.getItem('edc_store_name') || 'POS EDC';
         }
 
-        const roleLabel = this.currentUser?.role === 'admin' ? '(admin)' : '(kasir)';
+        const roleLabel = this.currentUser?.role === 'admin' ? '(admin)' : '(operator)';
 
         el.style.cssText = 'display: flex; align-items: center; gap: 8px; font-size: 14px;';
         el.innerHTML = `
@@ -306,10 +308,26 @@ class Router {
     applyPermissionUI() {
         this.navButtons.forEach(btn => {
             const mod = btn.getAttribute('data-module');
-            if (this.currentUser.role === 'kasir' && mod !== 'transaksi') {
-                btn.style.display = 'none';
-            } else {
+            const role = this.currentUser?.role;
+            const isOperator = role === 'operator' || role === 'kasir';
+            const isAdmin = role === 'admin';
+            if (isAdmin) {
+                // admin full kontrol semua menu
                 btn.style.display = 'flex';
+            } else if (isOperator) {
+                // RALAT: operator hanya transaksi
+                if (mod === 'transaksi') {
+                    btn.style.display = 'flex';
+                } else {
+                    btn.style.display = 'none';
+                }
+            } else {
+                // fallback keamanan: hanya transaksi
+                if (mod === 'transaksi') {
+                    btn.style.display = 'flex';
+                } else {
+                    btn.style.display = 'none';
+                }
             }
         });
     }
@@ -331,9 +349,14 @@ class Router {
             btn.addEventListener('click', () => {
                 const moduleName = btn.getAttribute('data-module');
 
-                if (this.currentUser.role === 'kasir' && moduleName !== 'transaksi') {
-                    alert(`Akses Ditolak! Operator "${this.currentUser.name}" tidak diizinkan mengakses modul ${moduleName.toUpperCase()}.`);
-                    return;
+                const roleCheck = this.currentUser?.role;
+                const isOp = roleCheck === 'operator' || roleCheck === 'kasir';
+                if (isOp) {
+                    const allowedModules = ['transaksi'];
+                    if (!allowedModules.includes(moduleName)) {
+                        alert(`Akses Ditolak! Operator "${this.currentUser.name}" hanya boleh akses Transaksi. Tidak bisa akses ${moduleName.toUpperCase()}.`);
+                        return;
+                    }
                 }
                 
                 if (moduleName !== 'setting' && !this.checkCloudConfig()) {
@@ -388,10 +411,16 @@ class Router {
             savedStream = Scanner.nativeStream;
         }
 
-        if (this.currentUser.role === 'kasir' && name !== 'transaksi') {
-            console.warn(`Kasir dialihkan dari modul ${name} ke transaksi`);
-            name = 'transaksi';
-            this.setActiveNav('transaksi');
+        // RALAT: operator hanya transaksi, admin full
+        const userRole = this.currentUser?.role;
+        const isOperatorRole = userRole === 'operator' || userRole === 'kasir';
+        if (isOperatorRole) {
+            const allowed = ['transaksi'];
+            if (!allowed.includes(name)) {
+                console.warn(`Operator ${this.currentUser?.name} tidak boleh akses ${name}, dialihkan ke transaksi`);
+                name = 'transaksi';
+                this.setActiveNav('transaksi');
+            }
         }
 
         this.contentArea.innerHTML = `<div class="loader">Memuat modul ${name}...</div>`;
