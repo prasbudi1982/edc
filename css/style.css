@@ -146,6 +146,46 @@ body {
 /* Common Components */
 .transaksi-container { display: flex; flex-direction: column; height: 100%; gap: 8px; }
 
+/* FIX: 5 item baru scroll - warna samakan dengan body */
+.cart-list {
+    max-height: 260px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
+    min-height: 0;
+}
+.cart-list::-webkit-scrollbar { width: 6px; }
+.cart-list::-webkit-scrollbar-thumb { 
+    background: var(--border-color); 
+    border-radius: 10px; 
+}
+.cart-list::-webkit-scrollbar-track { 
+    background: transparent; 
+}
+
+.cart-summary {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+
+/* Samakan juga scroll body & edc-content biar konsisten */
+.edc-content::-webkit-scrollbar,
+body::-webkit-scrollbar { width: 6px; }
+.edc-content::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb { 
+    background: var(--border-color); 
+    border-radius: 10px; 
+}
+.edc-content::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track { background: transparent; }
+.edc-content, body {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
+}
+
 .cart-summary {
     background: var(--bg-secondary);
     border-radius: var(--radius);
@@ -153,7 +193,7 @@ body {
     border: 1px solid var(--border-color);
 }
 
-.cart-list { max-height: 100px; overflow-y: auto; }
+
 .cart-item { display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.8rem; border-bottom: 1px dashed var(--border-color); }
 .cart-total { display: flex; justify-content: space-between; font-size: 1.1rem; font-weight: bold; color: var(--success-color); padding-top: 4px; }
 
