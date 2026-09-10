@@ -285,7 +285,6 @@ const MemberModule = {
           </div>
 
           <div id="member-card-preview" style="display:none; margin-top:12px; background:#fff; border-radius:12px; padding:12px; text-align:center; position:relative;">
-            <button id="btn-close-member-card" class="btn-touch" style="position:absolute; top:8px; right:8px; width:28px; height:28px; padding:0; border-radius:50%; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); font-size:0.8rem; font-weight:700; display:flex; align-items:center; justify-content:center; z-index:2;">✕</button>
             <div style="font-size:0.6rem; color:#0ea5e9; font-weight:700; margin-top:4px;">KARTU MEMBER DIGITAL</div>
             <div id="preview-member-name" style="font-weight:800; font-size:1rem; margin:6px 0; color:#0f172a;">-</div>
             <div style="background:#f8fafc; padding:8px; border-radius:6px; margin:6px 0;"><svg id="barcode-canvas"></svg></div>
