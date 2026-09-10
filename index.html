@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>POS EDC Modeling</title>
+    <title>POS EDC System Modern</title>
     
     <!-- PWA & Mobile Meta Tags -->
     <link rel="manifest" href="manifest.json">
@@ -19,12 +19,24 @@
     
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://unpkg.com/html5-qrcode"></script>
+    <!-- Member Barcode Libs -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7777484702320227"
-     crossorigin="anonymous">
-    </script>
+
+    <style>
+        /* Member Module Extra */
+        #barcode-canvas { max-width: 100%; }
+        #qrcode-canvas { display: flex; justify-content: center; }
+        .btn-scanner-toggle { width:100%; padding:8px; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-card); font-size:0.8rem; }
+        .btn-scanner-toggle.active { background: var(--accent-color); color: #fff; }
+        .edc-nav { display:flex; overflow-x:auto; scrollbar-width:none; }
+        .edc-nav::-webkit-scrollbar { display:none; }
+        .nav-btn { min-width: 60px; }
+    </style>
+
 </head>
 <body class="theme-dark">
 
@@ -119,6 +131,10 @@
             <button class="nav-btn" data-module="promosi">
                 <i data-lucide="tag"></i>
                 <span>Promosi</span>
+            </button>
+            <button class="nav-btn" data-module="member">
+                <i data-lucide="users"></i>
+                <span>Member</span>
             </button>
             <button class="nav-btn" data-module="laporan">
                 <i data-lucide="file-text"></i>
