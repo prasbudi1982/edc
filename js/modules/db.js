@@ -1,6 +1,6 @@
 const DB = {
     dbName: 'PosAppDB',
-    dbVersion: 5,
+    dbVersion: 6,
 
     mode: localStorage.getItem('edc_db_mode') || 'local',
     firestore: null,
@@ -78,6 +78,33 @@ const DB = {
                     }
                 }
 
+                // === NEW: MEMBERS & MEMBER LOGS ===
+                if (!db.objectStoreNames.contains('members')) {
+                    const memberStore = db.createObjectStore('members', { keyPath: 'id' });
+                    memberStore.createIndex('phone', 'phone', { unique: false });
+                    memberStore.createIndex('barcodeValue', 'barcodeValue', { unique: false });
+                    memberStore.createIndex('tier', 'tier', { unique: false });
+                    memberStore.createIndex('syncStatus', 'syncStatus', { unique: false });
+                } else {
+                    const memberStore = e.target.transaction.objectStore('members');
+                    if (!memberStore.indexNames.contains('phone')) memberStore.createIndex('phone', 'phone', { unique: false });
+                    if (!memberStore.indexNames.contains('barcodeValue')) memberStore.createIndex('barcodeValue', 'barcodeValue', { unique: false });
+                    if (!memberStore.indexNames.contains('tier')) memberStore.createIndex('tier', 'tier', { unique: false });
+                    if (!memberStore.indexNames.contains('syncStatus')) memberStore.createIndex('syncStatus', 'syncStatus', { unique: false });
+                }
+                if (!db.objectStoreNames.contains('member_logs')) {
+                    const logStore = db.createObjectStore('member_logs', { keyPath: 'id' });
+                    logStore.createIndex('memberId', 'memberId', { unique: false });
+                    logStore.createIndex('type', 'type', { unique: false });
+                    logStore.createIndex('date', 'date', { unique: false });
+                    logStore.createIndex('syncStatus', 'syncStatus', { unique: false });
+                } else {
+                    const logStore = e.target.transaction.objectStore('member_logs');
+                    if (!logStore.indexNames.contains('memberId')) logStore.createIndex('memberId', 'memberId', { unique: false });
+                    if (!logStore.indexNames.contains('type')) logStore.createIndex('type', 'type', { unique: false });
+                    if (!logStore.indexNames.contains('date')) logStore.createIndex('date', 'date', { unique: false });
+                    if (!logStore.indexNames.contains('syncStatus')) logStore.createIndex('syncStatus', 'syncStatus', { unique: false });
+                }
                 // === NEW: DISPOSAL LOGS UNTUK SORTIR EXPIRED / RUSAK / OPNAME ===
                 if (!db.objectStoreNames.contains('disposal_logs')) {
                     const dispStore = db.createObjectStore('disposal_logs', { keyPath: 'id' });
@@ -444,6 +471,8 @@ const DB = {
         if (collectionName === 'products') return this.saveProduct({ id, ...payload });
         if (collectionName === 'promotions') return this.savePromotion({ id, ...payload });
         if (collectionName === 'disposal_logs') return this.saveDisposalLog({ id, ...payload });
+        if (collectionName === 'members') return this.saveMember({ id, ...payload });
+        if (collectionName === 'member_logs') return this.saveMemberLog({ id, ...payload });
     },
 
     async deleteDoc(collectionName, id) {
@@ -451,9 +480,66 @@ const DB = {
         if (collectionName === 'products') return this.deleteProduct(id);
         if (collectionName === 'promotions') return this.deletePromotion(id);
         if (collectionName === 'disposal_logs') return this.deleteDisposalLog(id);
+        if (collectionName === 'members') return this.deleteMember(id);
     },
 
+
+    // --- MEMBERS ---
+    async getMembers() {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('members', 'readonly');
+            const store = tx.objectStore('members');
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = (e) => reject(e.target.error);
+        });
+    },
+    async saveMember(member) {
+        const db = await this.open();
+        const id = member.id || `MBR-${Date.now()}`;
+        const payload = { ...member, id, syncStatus: 'pending', updatedAt: new Date().toISOString() };
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('members', 'readwrite');
+            const store = tx.objectStore('members');
+            const req = store.put(payload);
+            req.onsuccess = () => resolve(payload);
+            req.onerror = (e) => reject(e.target.error);
+        });
+    },
+    async deleteMember(id) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('members', 'readwrite');
+            const store = tx.objectStore('members');
+            const req = store.delete(id);
+            req.onsuccess = () => resolve(true);
+            req.onerror = (e) => reject(e.target.error);
+        });
+    },
+    async getMemberLogs() {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('member_logs', 'readonly');
+            const store = tx.objectStore('member_logs');
+            const req = store.getAll();
+            req.onsuccess = () => resolve(req.result || []);
+            req.onerror = (e) => reject(e.target.error);
+        });
+    },
+    async saveMemberLog(log) {
+        const db = await this.open();
+        const payload = { ...log, id: log.id || `mlog_${Date.now()}`, syncStatus: 'pending', updatedAt: new Date().toISOString() };
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('member_logs', 'readwrite');
+            const store = tx.objectStore('member_logs');
+            const req = store.put(payload);
+            req.onsuccess = () => resolve(payload);
+            req.onerror = (e) => reject(e.target.error);
+        });
+    },
     // --- AUTO-PUSH ENGINE ---
+
 
     async syncPendingData() {
         // LOCAL-FIRST: jangan blokir UI, sync di background saja
@@ -466,7 +552,7 @@ const DB = {
 
         try {
             const { doc, writeBatch } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js");
-            const stores = ['products', 'promotions', 'transactions', 'disposal_logs'];
+            const stores = ['products', 'promotions', 'transactions', 'disposal_logs', 'members', 'member_logs'];
 
             for (const storeName of stores) {
                 const db = await this.open();
@@ -516,7 +602,7 @@ const DB = {
 
         try {
             const { collection, query, onSnapshot } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js");
-            const stores = ['products', 'promotions', 'transactions', 'disposal_logs'];
+            const stores = ['products', 'promotions', 'transactions', 'disposal_logs', 'members', 'member_logs'];
 
             stores.forEach(storeName => {
                 const q = query(collection(fs, storeName));

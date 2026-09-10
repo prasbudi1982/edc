@@ -2,6 +2,8 @@ import Scanner from './scanner.js';
 import Printer from './printer.js';
 import DB from './db.js';
 import Ads from './ads.js';
+import MemberModule from './member.js';
+import MemberPromoModule from './member_promo.js';
 
 const TransaksiModule = {
     cart: [],
@@ -44,6 +46,12 @@ const TransaksiModule = {
     promotions: [],
     topProducts: [],
     scannerActive: false,
+    currentMember: null,
+    memberMode: 'guest',
+    memberScannerActive: false,
+    memberDiscount: 0,
+    redeemPoints: 0,
+    memberPromoData: null,
     showPreviewModal: false,
     selectedPaymentMethod: null,
     appliedPromoIds: [], // Promo yang sudah di-apply manual
@@ -54,7 +62,40 @@ const TransaksiModule = {
         this.promotions = await DB.getPromotions();
         this.topProducts = await this.getTopSellingProducts(4);
 
-        const { subtotal, discount, taxTotal, taxDetails, totalBeforeTax, total, detectedPromos } = this.calculateTotalWithPromos();
+        // === MEMBER PROMO FETCH (TIDAK MERUBAH LOGIKA PROMO LAMA) ===
+        if (this.currentMember && this.memberMode === 'member') {
+            try {
+                if (window._memberPromoState && window._memberPromoState.lastMemberId !== this.currentMember.id) {
+                    MemberPromoModule.resetForNewTransaction();
+                    window._memberPromoState.lastMemberId = this.currentMember.id;
+                    this.memberDiscount = 0;
+                    this.redeemPoints = 0;
+                }
+                this.memberPromoData = await MemberPromoModule.getAvailablePromos(this.currentMember, this.cart, {
+                    products: this.products,
+                    transactions: await DB.getTransactions(),
+                    promotions: this.promotions
+                });
+                // auto apply tier discount saja
+                for (const p of (this.memberPromoData.promos||[]).filter(x=>x.autoApply && x.canApply)) {
+                    if (!window._memberPromoState.appliedIds.includes(p.id)) {
+                        MemberPromoModule.applyPromoToCart(p, this);
+                    }
+                }
+            } catch(e) { console.warn('member promo fetch fail', e); }
+        }
+
+        const baseResult = this.calculateTotalWithPromos();
+        let subtotal = baseResult.subtotal;
+        let discount = baseResult.discount;
+        let taxTotal = baseResult.taxTotal;
+        let taxDetails = baseResult.taxDetails;
+        let totalBeforeTax = baseResult.totalBeforeTax;
+        let detectedPromos = baseResult.detectedPromos;
+        let memberDiscount = this.memberDiscount || 0;
+        let total = Math.max(0, baseResult.totalBeforeTax - memberDiscount + taxTotal);
+        // Untuk kompatibilitas template lama, kita tetap pakai variabel total yang sudah termasuk member discount
+
         const scannerMode = localStorage.getItem('edc_scanner_mode') || 'camera';
 
         return `
@@ -72,6 +113,38 @@ const TransaksiModule = {
                         <button id="btn-toggle-trans-flash" class="btn-touch" style="padding:4px 10px; font-size:0.75rem; background:var(--bg-card);" disabled>
                             🔦 Flashlight OFF
                         </button>
+                    </div>
+                </div>
+
+                <!-- MEMBER / GUEST SELECTOR - TAMBAHAN MINIMAL -->
+                <div style="margin-top:10px; background:var(--bg-card,#fff); padding:10px; border-radius:8px; border:1px solid var(--border-color,#ccc);">
+                    <div style="display:flex; gap:6px; margin-bottom:8px;">
+                        <button id="btn-mode-guest" class="btn-touch ${this.memberMode==='guest'?'active':''}" style="flex:1; padding:7px; font-size:0.8rem;">👤 Guest</button>
+                        <button id="btn-mode-member" class="btn-touch ${this.memberMode==='member'?'active':''}" style="flex:1; padding:7px; font-size:0.8rem;">💳 Member</button>
+                    </div>
+                    <div id="member-input-area" style="display:${this.memberMode==='member'?'block':'none'};">
+                        ${!this.currentMember ? `
+                            <div style="display:flex; flex-direction:column; gap:6px;">
+                                <input id="member-barcode-input" placeholder="Scan Barcode Member / No HP / ID MBR-..." style="width:100%; padding:8px 10px; border:1px solid var(--accent-color); border-radius:6px; font-size:0.85rem; box-sizing:border-box;" />
+                                <div style="display:flex; gap:6px;">
+                                    <button id="btn-scan-member" class="btn-touch active" style="flex:1; padding:7px; font-size:0.8rem;">🔍 Cari</button>
+                                    <button id="btn-toggle-member-scanner-trans" class="btn-touch ${this.memberScannerActive?'active':''}" style="flex:1; padding:7px; font-size:0.8rem; background:${this.memberScannerActive?'#0ea5e9':'var(--bg-card)'}; color:${this.memberScannerActive?'#fff':'inherit'};">${this.memberScannerActive?'✕ Tutup Scan':'📷 Scan Barcode'}</button>
+                                </div>
+                            </div>
+                            <div id="member-scanner-wrapper-trans" style="display: ${this.memberScannerActive ? 'block' : 'none'}; text-align:center; margin-top:10px; background:rgba(14,165,233,0.05); padding:10px; border-radius:8px; border:1px dashed #0ea5e9;">
+                                <div id="member-interactive-scanner-trans" style="width:100%; max-width:280px; height:180px; margin:0 auto; overflow:hidden; border-radius:8px; border:2px solid #0ea5e9; background:#000;"></div>
+                                <div style="margin-top:8px; display:flex; gap:6px; justify-content:center;">
+                                    <button id="btn-toggle-member-flash-trans" class="btn-touch" style="padding:5px 12px; font-size:0.7rem;" disabled>🔦 Flash</button>
+                                    <button id="btn-close-member-scanner-trans" class="btn-touch" style="padding:5px 12px; font-size:0.7rem; background:#fee2e2; color:#dc2626;">Tutup Scanner</button>
+                                </div>
+                                <div style="font-size:0.6rem; color:#0ea5e9; margin-top:6px; font-weight:600;">Arahkan kamera ke barcode kartu member MBR-...</div>
+                            </div>
+                        ` : `
+                            <div style="background:rgba(14,165,233,0.1); border:1px solid #0ea5e9; border-radius:6px; padding:8px; display:flex; justify-content:space-between; align-items:center;">
+                                <div><b style="font-size:0.9rem;">${this.currentMember.name}</b> <span style="font-size:0.55rem; padding:2px 6px; border-radius:10px; background:#0ea5e9; color:#fff;">${(this.currentMember.tier||'bronze').toUpperCase()}</span><div style="font-size:0.7rem;">${this.currentMember.phone} • ${this.currentMember.points||0} poin</div></div>
+                                <button id="btn-remove-member" style="background:#fee2e2; color:#dc2626; border:none; padding:4px 8px; border-radius:6px; font-size:0.7rem;">✕</button>
+                            </div>
+                        `}
                     </div>
                 </div>
 
@@ -125,6 +198,19 @@ const TransaksiModule = {
                 ` : ''}
 
                 
+                ${this.memberMode==='member' && this.currentMember && this.memberPromoData ? `
+                    <div style="background:rgba(14,165,233,0.12); border:1px solid #0ea5e9; border-radius:8px; padding:10px; margin-top:8px;">
+                        <div style="display:flex; justify-content:space-between;"><b style="color:#0ea5e9; font-size:0.85rem;">💎 Promo Khusus ${this.currentMember.name}</b><span style="font-size:0.6rem; background:var(--bg-card); color:var(--text-secondary); padding:2px 8px; border-radius:20px; border:1px solid var(--border-color);">${this.memberPromoData.promos.length} promo</span></div>
+                        <div style="font-size:0.65rem; color:var(--text-secondary); margin-top:4px;">Total belanja: Rp ${Number(this.memberPromoData.totalSpend).toLocaleString('id-ID')} • ${this.memberPromoData.freq30}x/bulan</div>
+                        <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
+                            ${this.memberPromoData.promos.map(p => {
+                                const isApplied = window._memberPromoState && window._memberPromoState.appliedIds.includes(p.id);
+                                return `<div style="background:var(--bg-card); border:1px solid ${isApplied?'#10b981':'var(--border-color)'}; border-left:3px solid ${isApplied?'#10b981':'#0ea5e9'}; border-radius:6px; padding:6px 8px; display:flex; justify-content:space-between; align-items:center;"><div style="flex:1;"><div style="font-size:0.8rem; font-weight:600;">${p.name}</div><div style="font-size:0.68rem; color:var(--text-secondary);">${p.desc}</div>${p.discountAmount?`<div style="font-size:0.7rem; color:#10b981;">Hemat Rp ${Number(p.discountAmount).toLocaleString('id-ID')}</div>`:''}</div><div>${isApplied?`<span style="font-size:0.65rem; color:#10b981; font-weight:700;">✓</span><button onclick="TransaksiModule.removeMemberPromo('${p.id}')" style="margin-left:4px; padding:2px 6px; font-size:0.6rem; background:#fee2e2; color:#dc2626; border:none; border-radius:4px;">Batal</button>`:`${p.canApply?`<button onclick="TransaksiModule.applyMemberPromo('${p.id}')" class="btn-touch active" style="padding:4px 10px; font-size:0.7rem;">Apply</button>`:`<span style="font-size:0.6rem; color:#999;">Info</span>`}`}</div></div>`;
+                            }).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+
                 <style>
                 .cart-list::-webkit-scrollbar { width: 6px; }
                 .cart-list::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -139,7 +225,7 @@ const TransaksiModule = {
                             const lineTotal = item.price * item.qty;
                             const lineTax = item.taxEnabled ? Math.round(lineTotal * (Number(item.taxRate||11)/100)) : 0;
                             return `
-                            <div class="cart-item" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; border-bottom:1px dashed #eee; padding-bottom:4px;">
+                            <div class="cart-item" data-cart-prod-id="${item.prodId || item.name}" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; border-bottom:1px dashed #eee; padding-bottom:4px;">
                                 <div>
                                     <b>${item.name}</b> x${item.qty} ${item.taxEnabled ? `<span style="font-size:0.6rem; background:#ffc107; padding:1px 4px; border-radius:3px;">Pajak ${item.taxRate}%</span>` : ''}<br>
                                     <small style="color:var(--text-secondary);">@ Rp ${Number(item.price).toLocaleString()} ${item.taxEnabled ? `+ Pajak Rp ${lineTax.toLocaleString()}` : ''}</small>
@@ -163,8 +249,14 @@ const TransaksiModule = {
                         </div>
                         ${discount > 0 ? `
                             <div style="display:flex; justify-content:space-between; color:var(--success-color);">
-                                <span>Diskon Promo</span>
+                                <span>Diskon Promo Toko</span>
                                 <span>-Rp ${discount.toLocaleString()}</span>
+                            </div>
+                        ` : ''}
+                        ${memberDiscount > 0 ? `
+                            <div style="display:flex; justify-content:space-between; color:#0ea5e9;">
+                                <span>Diskon Member</span>
+                                <span>-Rp ${memberDiscount.toLocaleString()}</span>
                             </div>
                         ` : ''}
                         ${taxTotal > 0 ? `
@@ -447,7 +539,42 @@ const TransaksiModule = {
         }
 
         // 2. Insert ke Database Transaksi
+        // === TAMBAHAN MEMBER: simpan memberId ===
+        if (this.currentMember) {
+            transactionData.memberId = this.currentMember.id;
+            transactionData.memberName = this.currentMember.name;
+            transactionData.memberTier = this.currentMember.tier;
+            transactionData.memberDiscount = this.memberDiscount||0;
+            transactionData.redeemPoints = this.redeemPoints||0;
+            // total sudah termasuk member discount (dari render)
+            transactionData.total = Math.max(0, (transactionData.totalBeforeTax||transactionData.total) - (this.memberDiscount||0) + (transactionData.taxTotal||0));
+            if (transactionData.grandTotal) transactionData.grandTotal = transactionData.total;
+        }
+
         await DB.saveTransaction(transactionData);
+
+        // === UPDATE MEMBER POINTS (TIDAK MERUBAH LOGIKA LAMA) ===
+        if (this.currentMember) {
+            try {
+                const earned = Math.floor((transactionData.total||0) / (MemberPromoModule.config.pointsRate||10000));
+                this.currentMember.points = (Number(this.currentMember.points)||0) + earned - (this.redeemPoints||0);
+                this.currentMember.totalSpend = (Number(this.currentMember.totalSpend)||0) + (transactionData.total||0);
+                this.currentMember.totalTrx = (Number(this.currentMember.totalTrx)||0) + 1;
+                this.currentMember.lastTrxAt = Date.now();
+                if (MemberModule.calculateTier) {
+                    const newTier = MemberModule.calculateTier(this.currentMember.totalSpend);
+                    if (newTier !== this.currentMember.tier) {
+                        alert(`🎉 Member ${this.currentMember.name} naik tier ke ${newTier.toUpperCase()}!`);
+                        this.currentMember.tier = newTier;
+                    }
+                }
+                await DB.saveMember(this.currentMember);
+                await DB.saveMemberLog({ memberId: this.currentMember.id, type:'earn', points: earned, trxId: transactionData.id, reason:`Belanja Rp ${Number(transactionData.total||0).toLocaleString('id-ID')}`, date: Date.now() });
+                if (this.redeemPoints>0) {
+                    await DB.saveMemberLog({ memberId: this.currentMember.id, type:'redeem', points: -this.redeemPoints, trxId: transactionData.id, reason:`Redeem ${this.redeemPoints} poin`, date: Date.now() });
+                }
+            } catch(e) { console.warn('update member points fail', e); }
+        }
 
         // 3. Cetak Struk via Printer.js - DIALOG PDF DIMATIKAN
         try {
@@ -464,6 +591,9 @@ const TransaksiModule = {
         if (this.scannerActive) this.toggleScanner();
         this.cart = [];
         this.appliedPromoIds = [];
+        this.memberDiscount = 0;
+        this.redeemPoints = 0;
+        if (window._memberPromoState) { window._memberPromoState.appliedIds = []; }
         window.app.loadModule('transaksi');
     },
 
@@ -763,6 +893,9 @@ const TransaksiModule = {
         if (item.qty <= 0) {
             this.cart = this.cart.filter(i => (i.prodId ? String(i.prodId) !== String(identifier) : i.name !== identifier));
         }
+        // auto fokus tetap ke cart setelah update qty
+        window._transaksiAutoFocusCart = true;
+        window._transaksiAutoFocusProdId = identifier;
         window.app.loadModule('transaksi');
     },
 
@@ -792,6 +925,31 @@ const TransaksiModule = {
             flashBtn.textContent = isOn ? '🔦 Flashlight ON' : '🔦 Flashlight OFF';
             flashBtn.style.background = isOn ? 'var(--accent-color, #007bff)' : 'var(--bg-card)';
             flashBtn.style.color = isOn ? '#fff' : 'inherit';
+        }
+    },
+
+    async onMemberBarcodeScanned(code) {
+        const clean = String(code||'').trim();
+        if (!clean) return;
+        // Stop kamera langsung tanpa reload dulu biar tidak flicker
+        if (Scanner.stopCamera) { try { await Scanner.stopCamera(); } catch(e){} }
+        this.memberScannerActive = false;
+        const wrapper = document.getElementById('member-scanner-wrapper-trans');
+        if (wrapper) wrapper.style.display='none';
+        const member = await MemberModule.lookupByBarcode(clean);
+        if (member) {
+            this.currentMember = member;
+            try { this.memberPromoData = await MemberPromoModule.getAvailablePromos(member, this.cart, { products:this.products, transactions: await DB.getTransactions(), promotions: this.promotions }); } catch(e){ console.warn(e); }
+            if (!window._memberPromoState) window._memberPromoState = { appliedIds:[], lastMemberId:null };
+            window._memberPromoState.appliedIds=[]; window._memberPromoState.lastMemberId=member.id;
+            this.memberDiscount=0; this.redeemPoints=0;
+            (this.memberPromoData?.promos||[]).filter(p=>p.autoApply && p.canApply).forEach(p=> MemberPromoModule.applyPromoToCart(p, this));
+            window.app.loadModule('transaksi');
+        } else {
+            if (Scanner.releaseProcessing) Scanner.releaseProcessing();
+            alert(`Barcode ${clean} bukan member terdaftar`);
+            // tetap tutup scanner tapi jangan reload full jika tidak perlu
+            window.app.loadModule('transaksi');
         }
     },
 
@@ -878,6 +1036,9 @@ const TransaksiModule = {
             });
         }
         Scanner.releaseProcessing();
+        // FLAG auto fokus ke cart setelah insert
+        window._transaksiAutoFocusCart = true;
+        window._transaksiAutoFocusProdId = prodId;
         window.app.loadModule('transaksi');
     },
 
@@ -901,9 +1062,63 @@ const TransaksiModule = {
 
         document.getElementById('btn-toggle-scanner')?.addEventListener('click', () => this.toggleScanner());
         document.getElementById('btn-toggle-trans-flash')?.addEventListener('click', () => this.toggleFlashlight());
+        // MEMBER SCANNER HANDLERS - FIXED NO RELOAD
+        document.getElementById('btn-toggle-member-scanner-trans')?.addEventListener('click', async () => {
+            if (Scanner.stopCamera) { try { await Scanner.stopCamera(); } catch(e){} }
+            // Jangan reload, langsung toggle DOM
+            this.memberScannerActive = !this.memberScannerActive;
+            const wrapper = document.getElementById('member-scanner-wrapper-trans');
+            const btn = document.getElementById('btn-toggle-member-scanner-trans');
+            if (this.memberScannerActive) {
+                this.scannerActive = false;
+                const prodWrapper = document.getElementById('transaksi-scanner-wrapper');
+                if (prodWrapper) prodWrapper.style.display='none';
+                const prodBtn = document.getElementById('btn-toggle-scanner');
+                if (prodBtn) prodBtn.classList.remove('active');
+                if (wrapper) wrapper.style.display='block';
+                if (btn) { btn.classList.add('active'); btn.style.background='#0ea5e9'; btn.style.color='#fff'; btn.textContent='✕ Tutup Scan'; }
+                setTimeout(() => {
+                    const el = document.getElementById('member-interactive-scanner-trans');
+                    if (el && Scanner.startCamera) {
+                        Scanner.startCamera('member-interactive-scanner-trans', (code) => this.onMemberBarcodeScanned(code), (hasTorch) => {
+                            const f = document.getElementById('btn-toggle-member-flash-trans');
+                            if (f) f.disabled = !hasTorch;
+                        });
+                    }
+                }, 300);
+            } else {
+                if (wrapper) wrapper.style.display='none';
+                if (btn) { btn.classList.remove('active'); btn.style.background=''; btn.style.color=''; btn.textContent='📷 Scan Barcode'; }
+            }
+        });
+        document.getElementById('btn-close-member-scanner-trans')?.addEventListener('click', async () => { 
+            if (Scanner.stopCamera) { try { await Scanner.stopCamera(); } catch(e){} }
+            this.memberScannerActive=false;
+            const wrapper = document.getElementById('member-scanner-wrapper-trans');
+            if (wrapper) wrapper.style.display='none';
+            const btn = document.getElementById('btn-toggle-member-scanner-trans');
+            if (btn) { btn.classList.remove('active'); btn.style.background=''; btn.style.color=''; btn.textContent='📷 Scan Barcode'; }
+        });
+        document.getElementById('btn-toggle-member-flash-trans')?.addEventListener('click', () => { if (Scanner.toggleTorch) Scanner.toggleTorch(); else if (Scanner.toggleFlash) Scanner.toggleFlash(); });
 
-        // FIX ANTI BLANK HITAM: re-attach kamera jika masih aktif setelah reload
-        if (this.scannerActive) {
+        // Jika sebelumnya memberScannerActive true (habis reload), auto-start lagi
+        if (this.memberScannerActive) {
+            setTimeout(() => {
+                const wrapper = document.getElementById('member-scanner-wrapper-trans');
+                if (wrapper) wrapper.style.display = 'block';
+                const el = document.getElementById('member-interactive-scanner-trans');
+                if (el && window.Scanner && Scanner.startCamera) {
+                    if (Scanner.stopCamera) Scanner.stopCamera().catch(()=>{});
+                    Scanner.startCamera('member-interactive-scanner-trans', (code) => this.onMemberBarcodeScanned(code), (hasTorch) => {
+                        const flashBtn = document.getElementById('btn-toggle-member-flash-trans');
+                        if (flashBtn) { flashBtn.disabled = !hasTorch; }
+                    });
+                }
+            }, 400);
+        }
+
+        // FIX ANTI BLANK HITAM: re-attach kamera produk jika aktif dan member scanner tidak aktif
+        if (this.scannerActive && !this.memberScannerActive) {
             const mode = localStorage.getItem('edc_scanner_mode') || 'camera';
             if (mode === 'camera') {
                 setTimeout(() => {
@@ -933,6 +1148,48 @@ const TransaksiModule = {
                 dropdown.style.display = 'none';
             }
         });
+        // MEMBER MODE HANDLERS - TAMBAHAN MINIMAL
+        document.getElementById('btn-mode-guest')?.addEventListener('click', () => { this.memberMode='guest'; this.currentMember=null; this.memberPromoData=null; this.memberDiscount=0; this.redeemPoints=0; if(window._memberPromoState) { window._memberPromoState.appliedIds=[]; window._memberPromoState.lastMemberId=null; } window.app.loadModule('transaksi'); });
+        document.getElementById('btn-mode-member')?.addEventListener('click', () => { this.memberMode='member'; window.app.loadModule('transaksi'); setTimeout(()=>document.getElementById('member-barcode-input')?.focus(),200); });
+        document.getElementById('btn-scan-member')?.addEventListener('click', async () => {
+            const val = document.getElementById('member-barcode-input')?.value.trim();
+            if (!val) return alert('Scan atau ketik ID member');
+            const member = await MemberModule.lookupByBarcode(val);
+            if (!member) return alert('Member tidak ditemukan');
+            this.currentMember = member;
+            try { this.memberPromoData = await MemberPromoModule.getAvailablePromos(member, this.cart, { products:this.products, transactions: await DB.getTransactions(), promotions: this.promotions }); } catch(e){ console.warn(e); }
+            if (!window._memberPromoState) window._memberPromoState = { appliedIds:[], lastMemberId:null };
+            window._memberPromoState.appliedIds=[]; window._memberPromoState.lastMemberId=member.id;
+            this.memberDiscount=0; this.redeemPoints=0;
+            (this.memberPromoData?.promos||[]).filter(p=>p.autoApply && p.canApply).forEach(p=> MemberPromoModule.applyPromoToCart(p, this));
+            window.app.loadModule('transaksi');
+        });
+        document.getElementById('member-barcode-input')?.addEventListener('keydown', (e) => { if (e.key==='Enter') document.getElementById('btn-scan-member')?.click(); });
+        document.getElementById('btn-remove-member')?.addEventListener('click', () => { this.currentMember=null; this.memberPromoData=null; this.memberDiscount=0; this.redeemPoints=0; if(window._memberPromoState) window._memberPromoState.appliedIds=[]; window.app.loadModule('transaksi'); });
+
+        // AUTO FOKUS KE CART SETELAH INSERT BARANG - TIDAK MERUBAH LAIN
+        try {
+            if (window._transaksiAutoFocusCart) {
+                setTimeout(() => {
+                    const cartEl = document.querySelector('.cart-summary');
+                    if (cartEl) {
+                        cartEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        // highlight sebentar
+                        cartEl.style.transition = 'box-shadow 0.3s';
+                        cartEl.style.boxShadow = '0 0 0 2px var(--accent-color)';
+                        setTimeout(() => { cartEl.style.boxShadow = ''; }, 800);
+                        // fokus ke item terakhir jika ada prodId
+                        const prodId = window._transaksiAutoFocusProdId;
+                        if (prodId) {
+                            const itemEl = document.querySelector(`[data-cart-prod-id="${prodId}"]`);
+                            if (itemEl) itemEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        }
+                    }
+                    window._transaksiAutoFocusCart = false;
+                }, 150);
+            }
+        } catch(e) { console.warn('auto focus cart fail', e); }
+
         // ADS LOAD
         try { await Ads.loadScript(); } catch(e){ console.warn('Ads skip', e); }
     },
