@@ -1,5 +1,4 @@
 import DB from './db.js';
-import Ads from './ads.js';
 import Scanner from './scanner.js';
 
 const ProdukModule = {
@@ -130,12 +129,6 @@ const ProdukModule = {
                     ].map(f=>`<button class="btn-touch ${this.filterStatus===f.id?'active':''}" data-filter="${f.id}" style="font-size:0.7rem; padding:5px 10px; white-space:nowrap;">${f.label}</button>`).join('')}
                 </div>
 
-                <!-- ADS 728x90 PRODUK - FULL WIDTH TANPA LABEL -->
-                <div id="ads-produk-wrapper" style="margin-top:10px; width:100%; box-sizing:border-box; position:relative;">
-                    <div id="ad-produk-728x90" style="width:100%; min-height:90px; display:flex; align-items:center; justify-content:center; border-radius:8px; overflow:hidden; background:transparent;">
-                        <span style="font-size:10px; color:#94a3b8;">Memuat iklan...</span>
-                    </div>
-                </div>
 
                 <div class="setting-card" style="margin-top:8px; padding:8px;">
                     <div style="display:flex; gap:6px;">
@@ -430,7 +423,6 @@ const ProdukModule = {
     // alias untuk kompatibilitas jika app memanggil init()
     async init() {
         this.afterRender();
-        try { await Ads.loadScriptProduk(); } catch(e){ console.warn('Ads produk skip', e); }
     },
 
     getSortedProducts() {

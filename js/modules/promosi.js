@@ -1,5 +1,4 @@
 import DB from './db.js';
-import Ads from './ads.js';
 
 if (!window._promosiState) {
     window._promosiState = {
@@ -75,12 +74,6 @@ const PromosiModule = {
                     <button class="btn-touch active" id="btn-open-add-promo" style="padding:7px 12px; font-size:0.75rem; min-width:90px;">+ Buat Promo</button>
                 </div>
 
-                <!-- ADS 728x90 PROMOSI - FULL WIDTH TANPA LABEL -->
-                <div id="ads-promosi-wrapper" style="margin-top:10px; width:100%; box-sizing:border-box; position:relative;">
-                    <div id="ad-promosi-728x90" style="width:100%; min-height:90px; display:flex; align-items:center; justify-content:center; border-radius:8px; overflow:hidden; background:transparent;">
-                        <span style="font-size:10px; color:#94a3b8;">Memuat iklan...</span>
-                    </div>
-                </div>
 
                 <!-- ================= AUTO DETECT - SELARAS TEMA EDC ================= -->
                 <div class="setting-card" style="border:1px solid var(--border-color); border-left:3px solid var(--accent-color); padding:10px; background:var(--bg-secondary);">
@@ -331,7 +324,6 @@ const PromosiModule = {
         });
 
         this.initAutoButtons();
-        try { await Ads.loadScriptPromosi(); } catch(e){ console.warn('Ads promosi skip', e); }
     },
 
     initAutoButtons() {

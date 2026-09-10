@@ -1,7 +1,6 @@
 import Scanner from './scanner.js';
 import Printer from './printer.js';
 import DB from './db.js';
-import Ads from './ads.js';
 import MemberModule from './member.js';
 import MemberPromoModule from './member_promo.js';
 
@@ -166,14 +165,7 @@ const TransaksiModule = {
                         </div>
                     </div>
                 </div>
-                                <!-- ADS - TANPA LABEL, FULL WIDTH MATCH -->
-                <div id="ads-transaksi-wrapper" style="margin-top:10px; width:100%; box-sizing:border-box; position:relative;">
-                    <div id="ad-160x600" style="width:100%; min-height:90px; display:flex; align-items:center; justify-content:center; border-radius:8px; overflow:hidden; background:transparent;">
-                        <span style="font-size:10px; color:#94a3b8;">Memuat iklan...</span>
-                    </div>
-                </div>
-
-                <!-- Deteksi Promo Otomatis -->
+<!-- Deteksi Promo Otomatis -->
                 ${detectedPromos.length ? `
                     <div style="background:rgba(34,197,94,0.15); border:1px solid var(--success-color); border-radius:6px; padding:8px; margin-top:8px; font-size:0.75rem;">
                         <b style="color:var(--success-color); font-size:0.8rem;">🏷️ Promo Terdeteksi:</b>
@@ -1190,8 +1182,6 @@ const TransaksiModule = {
             }
         } catch(e) { console.warn('auto focus cart fail', e); }
 
-        // ADS LOAD
-        try { await Ads.loadScript(); } catch(e){ console.warn('Ads skip', e); }
     },
 
     shareToWhatsApp() {
