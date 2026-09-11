@@ -18,7 +18,6 @@ body.theme-light {
     --bg-card: #e2e8f0;
     --text-primary: #0f172a;
     --text-secondary: #64748b;
-    --accent-color: #2563eb;
     --border-color: #cbd5e1;
 }
 
@@ -403,4 +402,868 @@ body::-webkit-scrollbar-track { background: transparent; }
     0% { width: 0%; }
     50% { width: 65%; }
     100% { width: 100%; }
+}
+
+
+/* ======================================================
+   PATCH V2: CEGAH PULL REFRESH - FIX NAV HILANG
+   ====================================================== */
+/* Jangan pakai position:fixed di html, itu yang bikin nav kepotong */
+html {
+  overscroll-behavior: none;
+  overscroll-behavior-y: none;
+  height: 100%;
+  /* biar 100vh di mobile akurat */
+  height: -webkit-fill-available;
+}
+
+body {
+  overscroll-behavior: none;
+  overscroll-behavior-y: none;
+  /* penting: jangan touch-action:none, pakai pan-y biar scroll jalan */
+  touch-action: pan-y;
+  min-height: 100vh;
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
+  overflow: hidden; /* body tidak scroll, yang scroll cuma edc-content */
+}
+
+.edc-container {
+  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
+  touch-action: pan-x pan-y;
+  /* FIX 100vh bug mobile */
+  height: 100vh;
+  height: 100dvh;
+  height: -webkit-fill-available;
+  max-height: 100dvh;
+}
+
+.edc-content,
+.cart-list {
+  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.edc-nav {
+  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
+  touch-action: pan-x;
+  /* pastikan selalu kelihatan */
+  flex-shrink: 0 !important;
+  position: relative;
+  z-index: 20;
+}
+
+
+/* ======================================================
+   PATCH TEMA - DITAMBAHKAN TANPA UBAH YANG LAMA
+   ====================================================== */
+body.theme-dark {
+    --bg-primary: #121824;
+    --bg-secondary: #1a2232;
+    --bg-card: #242f42;
+    --text-primary: #ffffff;
+    --text-secondary: #8e9baf;
+    --border-color: #2e3a4e;
+    color-scheme: dark;
+}
+
+body.theme-light {
+    --bg-primary: #f1f5f9;
+    --bg-secondary: #ffffff;
+    --bg-card: #e2e8f0;
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
+    --border-color: #cbd5e1;
+    color-scheme: light;
+}
+
+body.theme-light .edc-container {
+    box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+}
+
+/* Transisi halus ganti tema - tidak mengganggu layout */
+.edc-container,
+.edc-header,
+.edc-nav,
+.setting-card,
+.cart-summary,
+.product-btn,
+.num-btn,
+.btn-scanner-toggle {
+    transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+}
+
+/* Support auto theme via data-theme attribute */
+@media (prefers-color-scheme: light) {
+    body[data-theme="auto"] {
+        --bg-primary: #f1f5f9;
+        --bg-secondary: #ffffff;
+        --bg-card: #e2e8f0;
+        --text-primary: #0f172a;
+        --text-secondary: #64748b;
+        --border-color: #cbd5e1;
+    }
+}
+
+
+/* ======================================================
+   FIX BUG AKSEM DI TEMA TERANG - TANPA UBAH YANG LAMA
+   ====================================================== */
+/* Pastikan accent selalu dari :root, bukan dari body */
+:root {
+    --accent-color: #2563eb;
+    --accent-hover: #1d4ed8;
+}
+
+/* Hapus override accent di theme class - biar JS yang kontrol */
+body.theme-dark,
+body.theme-light,
+body[data-theme="auto"] {
+    /* jangan definisikan --accent-color di sini, biar inherit dari :root */
+}
+
+body.theme-light {
+    /* pastikan accent tidak ke-reset */
+    --accent-color: var(--accent-color);
+}
+
+/* Active nav pakai accent dynamic, bukan hardcoded biru */
+.nav-btn.active {
+    color: var(--accent-color) !important;
+    background-color: color-mix(in srgb, var(--accent-color) 12%, transparent) !important;
+}
+
+/* Brand & highlight ikut accent */
+.edc-header .brand,
+.product-btn span,
+.splash-title span {
+    color: var(--accent-color) !important;
+}
+
+.num-btn.pay,
+.btn-scanner-toggle.active,
+.splash-icon-box,
+.splash-progress-fill {
+    background: var(--accent-color) !important;
+    background-color: var(--accent-color) !important;
+}
+
+#interactive-scanner {
+    border-color: var(--accent-color) !important;
+}
+
+
+/* ======================================================
+   FIX BUG: FORM KUSAM DARK + NAMA TOKO HILANG LIGHT
+   ====================================================== */
+
+/* ---- HEADER FIX ---- */
+.edc-header {
+    background-color: var(--bg-secondary) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+}
+
+/* Brand icon tetap aksen, teks toko pakai text-primary biar kontras di kedua tema */
+.edc-header .brand {
+    color: var(--accent-color) !important;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.edc-header .brand i,
+.edc-header .brand svg,
+.edc-header .brand [data-lucide] {
+    color: var(--accent-color) !important;
+    stroke: var(--accent-color) !important;
+}
+
+#header-store-name {
+    color: var(--text-primary) !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.5px;
+    font-size: 1rem !important;
+    line-height: 1;
+}
+
+/* Light mode: nama toko harus hitam pekat */
+body.theme-light #header-store-name {
+    color: #0f172a !important;
+}
+body.theme-light .edc-header .brand i,
+body.theme-light .edc-header .brand svg {
+    color: var(--accent-color) !important;
+}
+
+/* Dark mode: nama toko putih */
+body.theme-dark #header-store-name {
+    color: #ffffff !important;
+}
+
+/* Status bar (admin) & clock biar tetap kelihatan */
+.status-bar {
+    color: var(--text-secondary) !important;
+}
+body.theme-light .status-bar {
+    color: #475569 !important;
+}
+
+/* ---- FORM PENCARIAN FIX ---- */
+/* Base form-control - lebih kontras */
+.form-control,
+input[type="text"],
+input[type="search"],
+input[type="number"],
+input[type="password"],
+textarea,
+.transaksi-container input,
+.edc-content input {
+    background-color: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+    border: 1.5px solid var(--border-color) !important;
+    border-radius: 10px !important;
+}
+
+/* Dark mode: form lebih terang dari background */
+body.theme-dark .form-control,
+body.theme-dark input[type="text"],
+body.theme-dark input[type="search"],
+body.theme-dark .transaksi-container input {
+    background-color: #2a364d !important; /* lebih terang dari #121824 */
+    border-color: #3a4a68 !important;
+    color: #ffffff !important;
+}
+
+body.theme-dark .form-control::placeholder,
+body.theme-dark input::placeholder {
+    color: #8e9baf !important;
+    opacity: 1 !important;
+}
+
+/* Focus state - biar tidak kusam */
+.form-control:focus,
+input:focus {
+    border-color: var(--accent-color) !important;
+    outline: none !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color) 20%, transparent) !important;
+    background-color: var(--bg-card) !important;
+}
+body.theme-dark .form-control:focus {
+    background-color: #323f5a !important;
+}
+
+/* Light mode: form putih bersih */
+body.theme-light .form-control,
+body.theme-light input[type="text"],
+body.theme-light input[type="search"] {
+    background-color: #ffffff !important;
+    border-color: #cbd5e1 !important;
+    color: #0f172a !important;
+}
+body.theme-light .form-control::placeholder,
+body.theme-light input::placeholder {
+    color: #64748b !important;
+    opacity: 1 !important;
+}
+
+/* Khusus card pencarian di transaksi (dari screenshot) */
+.transaksi-container .setting-card,
+.edc-content .setting-card {
+    background-color: var(--bg-secondary) !important;
+}
+
+/* Input di dalam card member & cari barang - yang di screenshot kusam */
+#app-content input[placeholder*="Scan"],
+#app-content input[placeholder*="SKU"],
+#app-content input[placeholder*="Ketik"] {
+    background-color: var(--bg-card) !important;
+    font-weight: 500 !important;
+    padding: 12px !important;
+    font-size: 0.85rem !important;
+}
+body.theme-dark #app-content input[placeholder*="Scan"],
+body.theme-dark #app-content input[placeholder*="SKU"],
+body.theme-dark #app-content input[placeholder*="Ketik"] {
+    background-color: #2e3c56 !important;
+    border: 1.5px solid #4a5c7a !important;
+    color: #e2e8f0 !important;
+}
+
+
+/* ======================================================
+   FIX FINAL HARMONIS: Form ikut warna tema + Nama Toko Light
+   Hapus custom abu #2a364d, balik ke variable tema
+   ====================================================== */
+
+/* Reset form ke variable tema asli - HAPUS override custom sebelumnya */
+.form-control,
+input[type="text"],
+input[type="search"],
+input[type="number"],
+input[type="password"],
+textarea {
+    background-color: var(--bg-secondary) !important;
+    background: var(--bg-secondary) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-color) !important;
+}
+
+/* Dark: form = bg-secondary (#1a2232) - gelap selaras */
+body.theme-dark .form-control,
+body.theme-dark input[type="text"],
+body.theme-dark input[type="search"],
+body.theme-dark input[type="number"],
+body.theme-dark input[type="password"],
+body.theme-dark textarea {
+    background-color: var(--bg-secondary) !important;
+    background: var(--bg-secondary) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-color) !important;
+}
+
+/* Light: form = bg-secondary (#ffffff) - terang selaras */
+body.theme-light .form-control,
+body.theme-light input[type="text"],
+body.theme-light input[type="search"],
+body.theme-light input[type="number"],
+body.theme-light input[type="password"],
+body.theme-light textarea {
+    background-color: var(--bg-secondary) !important;
+    background: var(--bg-secondary) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-color) !important;
+}
+
+/* Placeholder biar tidak kusam */
+.form-control::placeholder,
+input::placeholder,
+textarea::placeholder {
+    color: var(--text-secondary) !important;
+    opacity: 0.8 !important;
+}
+body.theme-dark .form-control::placeholder { color: #8e9baf !important; opacity: 1 !important; }
+body.theme-light .form-control::placeholder { color: #64748b !important; opacity: 1 !important; }
+
+/* Focus tetap pakai accent tapi background tetap tema */
+.form-control:focus,
+input:focus,
+textarea:focus {
+    background-color: var(--bg-secondary) !important;
+    border-color: var(--accent-color) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color) 15%, transparent) !important;
+}
+
+/* Khusus input di dalam transaksi / member - yang di screenshot */
+.transaksi-container input,
+.edc-content input[type="text"],
+.edc-content input[type="search"],
+#app-content input {
+    background-color: var(--bg-secondary) !important;
+}
+
+/* ---- NAMA TOKO FIX FINAL ---- */
+.edc-header {
+    background-color: var(--bg-secondary) !important;
+}
+.edc-header .brand {
+    gap: 8px !important;
+}
+
+/* Icon tetap accent */
+.edc-header .brand i,
+.edc-header .brand svg {
+    color: var(--accent-color) !important;
+    stroke: var(--accent-color) !important;
+    width: 20px !important;
+    height: 20px !important;
+}
+
+/* NAMA TOKO: paksa pakai text-primary + font tebal */
+#header-store-name {
+    color: var(--text-primary) !important;
+    font-weight: 800 !important;
+    font-size: 0.95rem !important;
+    letter-spacing: 0.3px !important;
+    opacity: 1 !important;
+    display: inline-block !important;
+    visibility: visible !important;
+}
+
+/* LIGHT MODE: toko hitam pekat di header putih */
+body.theme-light .edc-header {
+    background-color: #ffffff !important;
+    border-bottom: 1px solid #cbd5e1 !important;
+}
+body.theme-light #header-store-name {
+    color: #0f172a !important;
+    -webkit-text-fill-color: #0f172a !important;
+}
+body.theme-light .edc-header .brand {
+    color: #0f172a !important;
+}
+
+/* DARK MODE: toko putih di header gelap */
+body.theme-dark .edc-header {
+    background-color: #1a2232 !important;
+    border-bottom: 1px solid #2e3a4e !important;
+}
+body.theme-dark #header-store-name {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
+body.theme-dark .edc-header .brand {
+    color: #ffffff !important;
+}
+
+/* AUTO MODE ikut sistem */
+body[data-theme="auto"] #header-store-name {
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
+}
+
+
+/* ======================================================
+   FIX HEADER BERANTAKAN + FORM TERANG TIDAK SERASI
+   ====================================================== */
+
+/* HEADER: jangan fixed 44px, biar auto */
+.edc-header {
+    height: auto !important;
+    min-height: 48px !important;
+    padding: 8px 12px !important;
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 8px !important;
+    line-height: 1.2 !important;
+}
+
+.edc-header .brand {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    flex-shrink: 0 !important;
+    min-width: 0 !important;
+}
+
+#header-store-name {
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    max-width: 110px !important;
+    line-height: 1.1 !important;
+}
+
+/* Status bar (admin, Out, LOCAL, jam) biar tidak nabrak */
+.status-bar,
+.edc-header .status-bar {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 6px 10px !important;
+    flex: 1 !important;
+    min-width: 0 !important;
+    font-size: 0.8rem !important;
+}
+
+/* Tombol Out di header */
+.status-bar button,
+.edc-header button,
+#btn-logout,
+button[id*="Out"] {
+    padding: 4px 10px !important;
+    font-size: 0.75rem !important;
+    border-radius: 6px !important;
+    white-space: nowrap !important;
+}
+
+/* ---- FORM HARMONIS FINAL ---- */
+/* Kartu = bg-secondary, Form = bg-card -> beda tipis tapi selaras tema */
+
+.setting-card,
+.transaksi-container > div,
+.edc-content > div,
+.cart-summary,
+.quick-products,
+.numpad-grid {
+    background-color: var(--bg-secondary) !important;
+}
+
+/* Form input = bg-card biar serasi */
+.form-control,
+input[type="text"],
+input[type="search"],
+input[type="number"],
+input[type="password"],
+textarea,
+#app-content input,
+.transaksi-container input {
+    background-color: var(--bg-card) !important;
+    background: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-color) !important;
+}
+
+/* Dark: card #1a2232, form #242f42 - gelap selaras */
+body.theme-dark .setting-card,
+body.theme-dark .transaksi-container > div,
+body.theme-dark .edc-content > div {
+    background-color: #1a2232 !important;
+}
+body.theme-dark .form-control,
+body.theme-dark #app-content input {
+    background-color: #242f42 !important;
+    background: #242f42 !important;
+    border-color: #2e3a4e !important;
+    color: #ffffff !important;
+}
+
+/* Light: card #ffffff, form #e2e8f0 - terang selaras (yang di screenshot kamu sekarang abu terang) */
+body.theme-light .setting-card,
+body.theme-light .transaksi-container > div,
+body.theme-light .edc-content > div {
+    background-color: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+}
+body.theme-light .form-control,
+body.theme-light #app-content input {
+    background-color: #e2e8f0 !important;
+    background: #e2e8f0 !important;
+    border-color: #cbd5e1 !important;
+    color: #0f172a !important;
+}
+body.theme-light .form-control::placeholder,
+body.theme-light #app-content input::placeholder {
+    color: #64748b !important;
+}
+
+/* Header Light & Dark final */
+body.theme-light .edc-header {
+    background: #ffffff !important;
+    border-bottom: 1px solid #cbd5e1 !important;
+}
+body.theme-light #header-store-name { color: #0f172a !important; }
+body.theme-dark .edc-header {
+    background: #1a2232 !important;
+    border-bottom: 1px solid #2e3a4e !important;
+}
+body.theme-dark #header-store-name { color: #ffffff !important; }
+
+
+/* ======================================================
+   FIX FINAL: Out kecil + Field seperti field beneran
+   ====================================================== */
+
+/* --- HEADER OUT BUTTON KECIL --- */
+.edc-header {
+    min-height: 42px !important;
+    padding: 6px 10px !important;
+}
+.status-bar {
+    gap: 6px !important;
+}
+
+/* Target semua kemungkinan tombol Out / Logout di header */
+#btn-logout,
+.btn-logout,
+.edc-header button,
+.status-bar button,
+button[id*="logout" i],
+button[id*="Out"],
+.edc-header [data-lucide="log-out"],
+.edc-header .lucide-log-out {
+    height: 26px !important;
+    min-height: 26px !important;
+    padding: 0 8px !important;
+    font-size: 0.7rem !important;
+    line-height: 1 !important;
+    border-radius: 6px !important;
+    border: 1px solid var(--border-color) !important;
+    background: transparent !important;
+    background-color: transparent !important;
+    color: var(--text-secondary) !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+}
+#btn-logout i,
+#btn-logout svg,
+.edc-header button i,
+.edc-header button svg {
+    width: 14px !important;
+    height: 14px !important;
+}
+
+body.theme-light #btn-logout,
+body.theme-light .edc-header button {
+    border-color: #cbd5e1 !important;
+    color: #475569 !important;
+    background: #f8fafc !important;
+}
+body.theme-dark #btn-logout,
+body.theme-dark .edc-header button {
+    border-color: #2e3a4e !important;
+    color: #8e9baf !important;
+    background: #1a2232 !important;
+}
+
+/* --- FIELD FORM SEPERTI FIELD BENERAN + SERASI TEMA --- */
+/* Konsep: kartu = bg-secondary, field = bg-primary (beda tipis, jelas field) */
+
+.form-control,
+input[type="text"],
+input[type="search"],
+input[type="number"],
+input[type="password"],
+textarea,
+#app-content input,
+.transaksi-container input {
+    background: var(--bg-primary) !important;
+    background-color: var(--bg-primary) !important;
+    border: 1.5px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
+    border-radius: 10px !important;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.05) !important;
+    font-weight: 500 !important;
+}
+
+/* DARK: kartu #1a2232, field #121824 (lebih gelap = inset) */
+body.theme-dark .form-control,
+body.theme-dark #app-content input,
+body.theme-dark .transaksi-container input {
+    background: #121824 !important;
+    background-color: #121824 !important;
+    border-color: #2e3a4e !important;
+    color: #ffffff !important;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.4) !important;
+}
+body.theme-dark .form-control::placeholder,
+body.theme-dark input::placeholder {
+    color: #64748b !important;
+    opacity: 1 !important;
+}
+
+/* LIGHT: kartu #ffffff, field #f8fafc / #f1f5f9 (sedikit abu biar kelihatan field) + border jelas */
+body.theme-light .form-control,
+body.theme-light #app-content input,
+body.theme-light .transaksi-container input {
+    background: #f8fafc !important;
+    background-color: #f8fafc !important;
+    border: 1.5px solid #cbd5e1 !important;
+    color: #0f172a !important;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.04) !important;
+}
+
+/* Khusus field pencarian utama - bikin lebih putih biar fokus */
+body.theme-light #app-content input[placeholder*="Ketik"],
+body.theme-light #app-content input[placeholder*="SKU"] {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    border: 1.5px solid #94a3b8 !important;
+}
+
+/* Focus = accent */
+.form-control:focus,
+#app-content input:focus {
+    border-color: var(--accent-color) !important;
+    background: var(--bg-secondary) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color) 15%, transparent), inset 0 1px 2px rgba(0,0,0,0.05) !important;
+}
+body.theme-dark .form-control:focus,
+body.theme-dark #app-content input:focus {
+    background: #1a2232 !important;
+}
+body.theme-light .form-control:focus,
+body.theme-light #app-content input:focus {
+    background: #ffffff !important;
+}
+
+
+/* HEADER 44px RAPI - FORM TETAP DARI FILE KAMU */
+.edc-header { height:44px !important; min-height:44px !important; max-height:44px !important; padding:0 10px !important; display:flex !important; flex-wrap:nowrap !important; justify-content:space-between !important; align-items:center !important; overflow:visible !important; gap:6px !important; }
+.edc-header .brand { display:flex !important; align-items:center !important; gap:6px !important; flex-shrink:1 !important; min-width:0 !important; overflow:visible !important; }
+#header-store-name { display:flex !important; align-items:center !important; gap:6px !important; white-space:nowrap !important; overflow:visible !important; }
+.status-bar { display:flex !important; align-items:center !important; gap:6px !important; flex-shrink:0 !important; margin-left:auto !important; white-space:nowrap !important; }
+
+/* OUT KECIL - BACKGROUND TETAP GELAP DI DARK, HANYA BORDER TERANG SEPERTI DI LIGHT */
+#btn-logout {
+    height: 20px !important;
+    min-height: 20px !important;
+    max-height: 20px !important;
+    padding: 0 6px !important;
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    line-height: 1 !important;
+    border-radius: 5px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 3px !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+}
+
+/* LIGHT: bg terang #ffffff, border #cbd5e1, font #475569 - sudah jelas */
+body.theme-light #btn-logout {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #475569 !important;
+    border: 1px solid #cbd5e1 !important;
+    -webkit-text-fill-color: #475569 !important;
+}
+body.theme-light #btn-logout i,
+body.theme-light #btn-logout svg {
+    color: #475569 !important;
+    stroke: #475569 !important;
+    width: 10px !important;
+    height: 10px !important;
+}
+
+/* DARK: bg tetap gelap #1a2232, border agak terang #2e3a4e / #475569 sesuai font, font #8e9baf - seperti perlakuan light */
+body.theme-dark #btn-logout {
+    background: #1a2232 !important;
+    background-color: #1a2232 !important;
+    color: #8e9baf !important;
+    border: 1px solid #2e3a4e !important;
+    -webkit-text-fill-color: #8e9baf !important;
+}
+body.theme-dark #btn-logout i,
+body.theme-dark #btn-logout svg {
+    color: #8e9baf !important;
+    stroke: #8e9baf !important;
+    width: 10px !important;
+    height: 10px !important;
+}
+
+
+/* FINAL FIX HEADER SAJA - POS EDC 2 BARIS, Out MUNCUL, LAIN JANGAN DIUBAH */
+.edc-header {
+    height: 44px !important;
+    min-height: 44px !important;
+    max-height: 44px !important;
+    padding: 0 8px 0 10px !important;
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+    gap: 0 !important;
+    overflow: visible !important;
+}
+.edc-header .brand {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    flex: 0 0 auto !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+}
+.edc-header .brand > svg,
+.edc-header .brand > i {
+    width: 26px !important;
+    height: 26px !important;
+    flex-shrink: 0 !important;
+}
+#header-store-name {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 6px !important;
+    overflow: visible !important;
+    flex: 0 0 auto !important;
+}
+/* POS EDC - buat 2 baris tanpa pakai <br> biar tidak vertikal S E D C */
+#header-store-name span:first-child {
+    font-weight: 800 !important;
+    color: #ffffff !important;
+    font-size: 13px !important;
+    line-height: 13px !important;
+    max-width: 38px !important;
+    white-space: normal !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+    display: block !important;
+    flex-shrink: 0 !important;
+}
+/* (admin) */
+#header-store-name span:nth-child(2) {
+    color: #8e9baf !important;
+    font-size: 12px !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+}
+/* Out - PASTIKAN MUNCUL seperti gambar 1 */
+#btn-logout {
+    display: inline-flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    flex-shrink: 0 !important;
+    width: auto !important;
+    min-width: 50px !important;
+    height: 26px !important;
+    padding: 0 10px !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 6px !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 4px !important;
+    cursor: pointer !important;
+    pointer-events: auto !important;
+    margin-left: 4px !important;
+}
+#btn-logout i, #btn-logout svg {
+    width: 12px !important;
+    height: 12px !important;
+    display: inline-block !important;
+    pointer-events: none !important;
+}
+#btn-logout span { pointer-events: none !important; }
+.status-bar {
+    margin-left: auto !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+}
+
+
+/* FIX KLIK LOGOUT GAMPANG - TANPA UBAH LAIN */
+#btn-logout {
+    min-width: 62px !important;
+    height: 34px !important;
+    min-height: 34px !important;
+    padding: 0 14px !important;
+    font-size: 13px !important;
+    border-radius: 8px !important;
+    cursor: pointer !important;
+    pointer-events: auto !important;
+    touch-action: manipulation !important;
+    -webkit-tap-highlight-color: transparent !important;
+    user-select: none !important;
+    position: relative !important;
+    z-index: 20 !important;
+}
+#btn-logout * {
+    pointer-events: none !important;
+}
+/* Perbesar area sentuh tanpa ubah visual - 16px di semua sisi */
+#btn-logout::before {
+    content: '' !important;
+    position: absolute !important;
+    top: -16px !important;
+    left: -16px !important;
+    right: -16px !important;
+    bottom: -16px !important;
+    z-index: -1 !important;
 }
