@@ -1,1 +1,8 @@
-
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "id.my.pos_edc.twa",
+        "sha256_cert_fingerprints": ["F4:7C:DE:75:D1:C1:8E:AA:A4:44:0B:89:FE:61:20:D0:0D:10:EB:E4:BC:7F:67:0D:9E:CC:2A:42:C0:8E:3B:35"]
+      }
+    }]
