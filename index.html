@@ -37,6 +37,79 @@
         .nav-btn { min-width: 60px; }
     </style>
 
+
+    
+    <!-- PATCH TEMA: Apply tema lebih awal biar tidak kedip - tanpa ubah yang lama -->
+    <script>
+    (function(){
+        try {
+            const theme = localStorage.getItem('edc_theme') || 'dark';
+            const accent = localStorage.getItem('edc_accent') || '#2563eb';
+            const root = document.documentElement;
+            root.style.setProperty('--accent-color', accent);
+            root.style.setProperty('--accent-hover', accent);
+            // set class secepatnya
+            document.addEventListener('DOMContentLoaded', function(){
+                const body = document.body;
+                body.classList.remove('theme-dark','theme-light');
+                if (theme === 'auto') {
+                    const isLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+                    body.classList.add(isLight ? 'theme-light' : 'theme-dark');
+                    body.setAttribute('data-theme','auto');
+                    root.style.colorScheme = isLight ? 'light' : 'dark';
+                } else if (theme === 'light') {
+                    body.classList.add('theme-light');
+                    body.setAttribute('data-theme','light');
+                    root.style.colorScheme = 'light';
+                } else {
+                    body.classList.add('theme-dark');
+                    body.setAttribute('data-theme','dark');
+                    root.style.colorScheme = 'dark';
+                }
+                const meta = document.querySelector('meta[name="theme-color"]');
+                if (meta) {
+                    meta.content = body.classList.contains('theme-light') ? '#ffffff' : '#0f172a';
+                }
+            });
+        } catch(e){}
+    })();
+    </script>
+
+    <!-- PATCH V2: Anti Pull Refresh - tanpa position:fixed, fix nav hilang -->
+    <style>
+        html {
+            overscroll-behavior: none;
+            overscroll-behavior-y: none;
+            height: 100%;
+            height: -webkit-fill-available;
+        }
+        body {
+            overscroll-behavior: none;
+            overscroll-behavior-y: none;
+            touch-action: pan-y;
+            overflow: hidden;
+            min-height: 100vh;
+            min-height: 100dvh;
+            min-height: -webkit-fill-available;
+        }
+        .edc-container {
+            height: 100vh;
+            height: 100dvh;
+            max-height: 100dvh;
+            overscroll-behavior: contain;
+        }
+        .edc-content, .cart-list {
+            overscroll-behavior: contain;
+            overscroll-behavior-y: contain;
+            touch-action: pan-y;
+        }
+        .edc-nav {
+            flex-shrink: 0 !important;
+            position: relative;
+            z-index: 20;
+        }
+    </style>
+
 </head>
 <body class="theme-dark">
 
@@ -147,6 +220,41 @@
         </nav>
     </div>
 
+        <script type="module">
+    // PATCH TEMA MODULE - load tanpa ganggu main.js
+    import ThemeManager from './js/modules/theme.js';
+    // jika theme.js belum ada, fallback sudah di-handle di atas
+    try { ThemeManager.init(); } catch(e){}
+    </script>
     <script src="js/main.js" type="module"></script>
+
+    <!-- PATCH V2 JS: cegah pull-refresh tapi jangan blok nav -->
+    <script>
+    (function() {
+        let startY = 0;
+        document.addEventListener('touchstart', e => {
+            if (e.touches.length === 1) startY = e.touches[0].clientY;
+        }, {passive: true});
+
+        document.addEventListener('touchmove', e => {
+            const target = e.target;
+            // biarkan nav tetap bisa di-swipe horizontal
+            if (target.closest('.edc-nav')) return;
+            
+            const scrollable = target.closest('.edc-content, .cart-list');
+            if (!scrollable) {
+                // cegah body ketarik
+                if (e.cancelable) e.preventDefault();
+                return;
+            }
+            const atTop = scrollable.scrollTop <= 0;
+            const delta = e.touches[0].clientY - startY;
+            if (atTop && delta > 0 && e.cancelable) {
+                e.preventDefault();
+            }
+        }, {passive: false});
+    })();
+    </script>
+
 </body>
 </html>
