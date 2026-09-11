@@ -1,8 +1,10 @@
 import DB from './modules/db.js';
 import Scanner from './modules/scanner.js';
+import ThemeManager from './modules/theme.js'; // hanya tambah modul theme
 
 class Router {
     constructor() {
+        try { ThemeManager.init(); } catch(e) { console.warn('Theme init gagal:', e); }
         this.contentArea = document.getElementById('app-content');
         this.navButtons = document.querySelectorAll('.nav-btn');
         this.modules = {};
@@ -128,7 +130,7 @@ class Router {
         modalOverlay.id = 'login-modal-overlay';
         modalOverlay.style.cssText = `
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(4px);
+            background: rgba(0, 0, 0, 0.65); backdrop-filter: blur(6px);
             display: flex; align-items: center; justify-content: center;
             z-index: 9999; font-family: system-ui, -apple-system, sans-serif;
         `;
@@ -137,32 +139,36 @@ class Router {
             ? operators.map(op => `<option value="${op.id}">${op.name}</option>`).join('')
             : '<option value="">-- Belum ada operator terdaftar --</option>';
 
+        // FIX: Modal login sesuaikan tema - pakai CSS var biar dark/light/auto ikut setting
         modalOverlay.innerHTML = `
-            <div style="background: #ffffff; width: 100%; max-width: 380px; padding: 28px; border-radius: 12px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04); border: 1px solid #e2e8f0;">
+            <div id="login-modal-card" style="background: var(--bg-card, #242f42); width: 100%; max-width: 380px; padding: 28px; border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); border: 1px solid var(--border-color, #2e3a4e);">
                 <div style="text-align: center; margin-bottom: 20px;">
-                    <h2 style="margin: 0 0 6px 0; color: #0f172a; font-size: 20px; font-weight: 700;">Masuk Sesi POS EDC</h2>
-                    <p style="margin: 0; color: #64748b; font-size: 13px;">Pilih peran akun dan masukkan PIN autentikasi</p>
+                    <div style="width: 48px; height: 48px; background: var(--accent-color, #2563eb); border-radius: 12px; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px auto;">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v2M15 1v2M9 21v2M15 21v2M1 9h2M1 15h2M21 9h2M21 15h2"/></svg>
+                    </div>
+                    <h2 style="margin: 0 0 6px 0; color: var(--text-primary, #ffffff); font-size: 20px; font-weight: 700;">Masuk Sesi POS EDC</h2>
+                    <p style="margin: 0; color: var(--text-secondary, #8e9baf); font-size: 13px;">Pilih peran akun dan masukkan PIN autentikasi</p>
                 </div>
 
-                <div style="display: flex; gap: 8px; margin-bottom: 20px; background: #f1f5f9; padding: 4px; border-radius: 8px;">
-                    <button type="button" id="tab-role-admin" style="flex: 1; padding: 8px; border: none; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; background: #ffffff; color: #1e293b; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Admin</button>
-                    <button type="button" id="tab-role-kasir" style="flex: 1; padding: 8px; border: none; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; background: transparent; color: #64748b;">Kasir / Operator</button>
+                <div style="display: flex; gap: 8px; margin-bottom: 20px; background: var(--bg-primary, #121824); padding: 4px; border-radius: 10px; border: 1px solid var(--border-color, #2e3a4e);">
+                    <button type="button" id="tab-role-admin" style="flex: 1; padding: 9px; border: none; border-radius: 7px; font-weight: 600; font-size: 13px; cursor: pointer; background: var(--bg-card, #242f42); color: var(--text-primary, #ffffff); box-shadow: 0 1px 3px rgba(0,0,0,0.2);">Admin</button>
+                    <button type="button" id="tab-role-kasir" style="flex: 1; padding: 9px; border: none; border-radius: 7px; font-weight: 600; font-size: 13px; cursor: pointer; background: transparent; color: var(--text-secondary, #8e9baf);">Kasir / Operator</button>
                 </div>
 
                 <form id="form-login-auth">
                     <div id="field-operator-select" style="display: none; margin-bottom: 16px;">
-                        <label style="display: block; font-size: 12px; font-weight: 600; color: #334155; margin-bottom: 6px;">Pilih Akun Operator</label>
-                        <select id="login-operator-id" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; outline: none; box-sizing: border-box; background: #fff;">
+                        <label style="display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary, #8e9baf); margin-bottom: 6px;">Pilih Akun Operator</label>
+                        <select id="login-operator-id" style="width: 100%; padding: 11px 12px; border: 1px solid var(--border-color, #2e3a4e); border-radius: 8px; font-size: 14px; outline: none; box-sizing: border-box; background: var(--bg-primary, #121824); color: var(--text-primary, #fff);">
                             ${operatorOptions}
                         </select>
                     </div>
 
                     <div style="margin-bottom: 20px;">
-                        <label id="label-pin" style="display: block; font-size: 12px; font-weight: 600; color: #334155; margin-bottom: 6px;">PIN Administrator</label>
-                        <input type="password" id="login-pin" placeholder="Masukkan PIN" required style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; outline: none; box-sizing: border-box;">
+                        <label id="label-pin" style="display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary, #8e9baf); margin-bottom: 6px;">PIN Administrator</label>
+                        <input type="password" id="login-pin" placeholder="Masukkan PIN" required style="width: 100%; padding: 11px 12px; border: 1px solid var(--border-color, #2e3a4e); border-radius: 8px; font-size: 14px; outline: none; box-sizing: border-box; background: var(--bg-primary, #121824); color: var(--text-primary, #fff);">
                     </div>
 
-                    <button type="submit" style="width: 100%; padding: 10px; background: #2563eb; color: white; border: none; border-radius: 6px; font-weight: 600; font-size: 14px; cursor: pointer; transition: background 0.2s;">
+                    <button type="submit" style="width: 100%; padding: 11px; background: var(--accent-color, #2563eb); color: white; border: none; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; transition: all 0.2s;">
                         Masuk Sistem
                     </button>
                 </form>
@@ -177,13 +183,23 @@ class Router {
         const opSelectGroup = document.getElementById('field-operator-select');
         const labelPin = document.getElementById('label-pin');
 
+        const getThemeVars = () => {
+            const isLight = document.body.classList.contains('theme-light');
+            return {
+                cardBg: 'var(--bg-card, #242f42)',
+                sec: 'var(--text-secondary, #8e9baf)',
+                primary: 'var(--text-primary, #ffffff)'
+            };
+        };
+
         tabAdmin.addEventListener('click', () => {
             activeRoleMode = 'admin';
-            tabAdmin.style.background = '#ffffff';
-            tabAdmin.style.color = '#1e293b';
-            tabAdmin.style.boxShadow = '0 1px 2px rgba(0,0,0,0.05)';
+            const v = getThemeVars();
+            tabAdmin.style.background = 'var(--bg-card, #242f42)';
+            tabAdmin.style.color = 'var(--text-primary, #ffffff)';
+            tabAdmin.style.boxShadow = '0 1px 3px rgba(0,0,0,0.2)';
             tabKasir.style.background = 'transparent';
-            tabKasir.style.color = '#64748b';
+            tabKasir.style.color = 'var(--text-secondary, #8e9baf)';
             tabKasir.style.boxShadow = 'none';
             opSelectGroup.style.display = 'none';
             labelPin.textContent = 'PIN Administrator';
@@ -191,11 +207,11 @@ class Router {
 
         tabKasir.addEventListener('click', () => {
             activeRoleMode = 'kasir';
-            tabKasir.style.background = '#ffffff';
-            tabKasir.style.color = '#1e293b';
-            tabKasir.style.boxShadow = '0 1px 2px rgba(0,0,0,0.05)';
+            tabKasir.style.background = 'var(--bg-card, #242f42)';
+            tabKasir.style.color = 'var(--text-primary, #ffffff)';
+            tabKasir.style.boxShadow = '0 1px 3px rgba(0,0,0,0.2)';
             tabAdmin.style.background = 'transparent';
-            tabAdmin.style.color = '#64748b';
+            tabAdmin.style.color = 'var(--text-secondary, #8e9baf)';
             tabAdmin.style.boxShadow = 'none';
             opSelectGroup.style.display = 'block';
             labelPin.textContent = 'PIN Operator';
@@ -531,5 +547,6 @@ class Router {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    try { ThemeManager.init(); } catch(e){}
     window.app = new Router();
 });
