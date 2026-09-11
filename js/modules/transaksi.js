@@ -42,6 +42,30 @@ const TransaksiModule = {
         return d.toLocaleDateString('id-ID', {day:'2-digit', month:'short', year:'numeric'});
     },
 
+
+    getIsiPerSatuan(p){ return Number(p.isiPerSatuan || p.isiPerDus || p.isi || 1); },
+    getSatuanBeli(p){ return p.satuanBeli || 'dus'; },
+    formatStokGrosir(p){
+        const stock = Number(p.stock||0);
+        const isi = this.getIsiPerSatuan(p);
+        const satuan = this.getSatuanBeli(p);
+        if(isi<=1 || satuan==='pcs') return `${stock} pcs`;
+        const dus = Math.floor(stock/isi);
+        const sisa = stock % isi;
+        if(dus>0 && sisa>0) return `${dus} ${satuan} ${sisa} pcs`;
+        if(dus>0) return `${dus} ${satuan}`;
+        return `${stock} pcs`;
+    },
+    getAvailableUnits(p){
+        const isi = this.getIsiPerSatuan(p);
+        const satuan = this.getSatuanBeli(p);
+        const list=[];
+        if((p.hargaJualDus||p.hargaJualGrosir) && isi>1){
+            list.push({value:satuan, label:`${satuan.toUpperCase()} (${isi} pcs) Rp ${Number(p.hargaJualDus||p.hargaJualGrosir).toLocaleString()}`, price:Number(p.hargaJualDus||p.hargaJualGrosir), pcs:isi});
+        }
+        list.push({value:'pcs', label:`PCS Rp ${Number(p.hargaJualPcs||p.price||0).toLocaleString()}`, price:Number(p.hargaJualPcs||p.price||0), pcs:1});
+        return list;
+    },
     promotions: [],
     topProducts: [],
     scannerActive: false,
@@ -158,10 +182,10 @@ const TransaksiModule = {
                             oninput="TransaksiModule.handleProductSearch(this.value)"
                             onfocus="TransaksiModule.handleProductSearch(this.value)"
                             autocomplete="off"
-                            style="width:100%; padding:8px 12px; font-size:0.85rem; border:1px solid #ccc; border-radius:6px; box-sizing:border-box;">
+                            style="width:100%; padding:10px 12px; font-size:0.85rem; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-primary); border-radius:8px; box-sizing:border-box;">
                         
                         <!-- Dropdown Results Autocomplete -->
-                        <div id="search-results-dropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid #ccc; border-radius:6px; box-shadow:0 4px 10px rgba(0,0,0,0.15); max-height:180px; overflow-y:auto; z-index:99; margin-top:4px;">
+                        <div id="search-results-dropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.15); max-height:220px; overflow-y:auto; z-index:99; margin-top:4px;">
                         </div>
                     </div>
                 </div>
@@ -225,9 +249,9 @@ const TransaksiModule = {
                                 <div style="text-align:right;">
                                     <div>Rp ${lineTotal.toLocaleString()}</div>
                                     ${item.taxEnabled ? `<div style="font-size:0.65rem; color:#d97706;">+Rp ${lineTax.toLocaleString()} pajak</div>` : ''}
-                                    <div style="margin-top:2px;">
-                                        <button onclick="TransaksiModule.updateQty('${item.prodId || item.name}', -1)" style="padding:1px 6px; font-size:0.75rem;">-</button>
-                                        <button onclick="TransaksiModule.updateQty('${item.prodId || item.name}', 1)" style="padding:1px 6px; font-size:0.75rem;">+</button>
+                                    <div style="margin-top:4px; display:flex; gap:8px;">
+                                        <button onclick="TransaksiModule.updateQty('${item.prodId}', -1, '${item.satuanJual||'pcs'}')" style="padding:4px 10px; font-size:0.85rem;">-</button>
+                                        <button onclick="TransaksiModule.updateQty('${item.prodId}', 1, '${item.satuanJual||'pcs'}')" style="padding:4px 10px; font-size:0.85rem;">+</button>
                                     </div>
                                 </div>
                             </div>
@@ -320,22 +344,19 @@ const TransaksiModule = {
     handleProductSearch(query) {
         const dropdown = document.getElementById('search-results-dropdown');
         if (!dropdown) return;
-
         const q = query.trim().toLowerCase();
         if (!q) {
             dropdown.style.display = 'none';
             dropdown.innerHTML = '';
             return;
         }
-
         const matches = this.products.filter(p => 
             (p.name && p.name.toLowerCase().includes(q)) ||
             (p.barcode && p.barcode.toLowerCase().includes(q)) ||
             (p.sku && p.sku.toLowerCase().includes(q))
         );
-
         if (matches.length === 0) {
-            dropdown.innerHTML = `<div style="padding:8px; font-size:0.75rem; color:#888; text-align:center;">Barang tidak ditemukan</div>`;
+            dropdown.innerHTML = `<div style="padding:8px; font-size:0.75rem; color:var(--text-secondary); text-align:center;">Barang tidak ditemukan</div>`;
         } else {
             dropdown.innerHTML = matches.map(p => {
                 const stok = Number(p.stock ?? 0);
@@ -343,21 +364,20 @@ const TransaksiModule = {
                 const isExpired = this.isProductExpired(p);
                 const expLabel = isExpired ? this.getExpiredLabel(p) : '';
                 const disabled = isHabis || isExpired;
+                const units = this.getAvailableUnits(p);
                 return `
-                <div onclick="${disabled ? '' : `TransaksiModule.selectSearchProduct('${p.id}')`}" 
-                     style="padding:8px; border-bottom:1px solid #eee; ${disabled ? 'opacity:0.6; background:#fef2f2;' : 'cursor:pointer;'} display:flex; justify-content:space-between; align-items:center;">
-                    <div>
-                        <b style="font-size:0.8rem; color:#000;">${p.name} 
-                            ${isHabis ? '<span style="background:#ef4444; color:#fff; font-size:0.6rem; padding:1px 4px; border-radius:3px;">HABIS</span>' : ''}
-                            ${isExpired ? `<span style="background:#991b1b; color:#fff; font-size:0.6rem; padding:1px 4px; border-radius:3px; margin-left:3px;">EXPIRED ${expLabel}</span>` : ''}
-                        </b><br>
-                        <small style="color:#666; font-size:0.7rem;">SKU/BC: ${p.sku || p.barcode || '-'} | Stok: ${p.stock ?? '-'} ${isExpired ? `| Exp: ${expLabel}` : ''}</small>
+                <div style="padding:10px; border-bottom:1px solid var(--border-color); display:flex; flex-direction:column; gap:6px; background:var(--bg-card); ${disabled ? 'opacity:0.6;' : ''}">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                        <div style="flex:1; min-width:0;">
+                            <b style="font-size:0.8rem; color:var(--text-primary);">${p.name}</b><br>
+                            <small style="color:var(--text-secondary); font-size:0.7rem;">Stok: ${this.formatStokGrosir(p)}</small>
+                        </div>
+                        <span style="font-weight:bold; font-size:0.8rem; color:var(--accent-color);">Rp ${Number(p.hargaJualPcs||p.price||0).toLocaleString()}</span>
                     </div>
-                    <span style="font-weight:bold; font-size:0.8rem; color:${disabled ? '#999' : 'var(--accent-color, #007bff)'};">Rp ${Number(p.price).toLocaleString()}</span>
+                    ${!disabled ? `<div style="display:flex; gap:6px; flex-wrap:wrap;">${units.map(u=>`<button type="button" onclick="TransaksiModule.addItemByProduct('${p.id}','${u.value}'); document.getElementById('search-results-dropdown').style.display='none'; document.getElementById('manual-search-input').value=''; " class="btn-touch active" style="font-size:0.7rem; padding:5px 10px; border-radius:20px; height:auto;">+ ${u.label}</button>`).join('')}</div>` : ''}
                 </div>
             `}).join('');
         }
-
         dropdown.style.display = 'block';
     },
 
@@ -496,7 +516,7 @@ const TransaksiModule = {
         }
 
         const { subtotal, total, discount, taxTotal, taxDetails, totalBeforeTax } = this.calculateTotalWithPromos();
-        const totalBuyPrice = this.cart.reduce((sum, item) => sum + ((item.buyPrice || 0) * item.qty), 0);
+        const totalBuyPrice = this.cart.reduce((sum, item) => sum + ((item.buyPricePerPcs || item.buyPrice || 0) * (item.pcsKeluar || item.qty || 0) || (item.buyPrice||0)*item.qty), 0);
         const grossProfit = total - totalBuyPrice;
 
         const transactionData = { 
@@ -519,12 +539,13 @@ const TransaksiModule = {
             customerInfo // Disimpan data pembeli jika BON
         };
 
-        // 1. Potong Stok Barang di DB
+        // 1. Potong Stok Barang di DB - PATCH GROSIR: pakai pcsKeluar
         for (let item of this.cart) {
             if (item.prodId) {
                 const prod = this.products.find(p => String(p.id) === String(item.prodId));
                 if (prod) {
-                    prod.stock = Math.max(0, prod.stock - item.qty);
+                    const pcsKeluar = Number(item.pcsKeluar || item.qty || 0);
+                    prod.stock = Math.max(0, Number(prod.stock||0) - pcsKeluar);
                     await DB.saveProduct(prod);
                 }
             }
@@ -903,8 +924,10 @@ const TransaksiModule = {
         }
     },
 
-    updateQty(identifier, delta) {
-        const item = this.cart.find(i => String(i.prodId) === String(identifier) || i.name === identifier);
+    updateQty(identifier, delta, satuanOpt=null) {
+        let _satuan = null; let _delta = delta; if(typeof delta==='string'){ _satuan=delta; _delta=satuanOpt; } else if(satuanOpt && typeof satuanOpt==='string'){ _satuan=satuanOpt; }
+        let item = null;
+        if(_satuan){ item = this.cart.find(i => (String(i.prodId)===String(identifier)||i.name===identifier) && (i.satuanJual||'pcs')===_satuan); } else { item = this.cart.find(i => String(i.prodId)===String(identifier)||i.name===identifier); }
         if (!item) return;
         if (delta > 0 && item.prodId) {
             const prod = this.products.find(p => String(p.id) === String(item.prodId));
@@ -916,7 +939,10 @@ const TransaksiModule = {
                 }
             }
         }
-        item.qty += delta;
+        const pcsPerItem = item.satuanJual!=='pcs' ? (item.isiPerSatuan||1) : 1;
+        item.qty += _delta;
+        item.pcsKeluar = (item.pcsKeluar||0) + (_delta*pcsPerItem);
+        if(item.qty<=0){ this.cart=this.cart.filter(i=> !(String(i.prodId)===String(identifier)&& (i.satuanJual||'pcs')=== (item.satuanJual||'pcs'))); window.app.loadModule('transaksi'); return; }
         if (item.qty <= 0) {
             this.cart = this.cart.filter(i => (i.prodId ? String(i.prodId) !== String(identifier) : i.name !== identifier));
         }
@@ -967,7 +993,7 @@ const TransaksiModule = {
                 }
                 const rightDiv = itemEl.querySelector('div[style*="text-align:right"]');
                 if (rightDiv) {
-                    rightDiv.innerHTML = `<div>Rp ${lineTotal.toLocaleString()}</div>${item.taxEnabled ? `<div style="font-size:0.65rem; color:#d97706;">+Rp ${lineTax.toLocaleString()} pajak</div>` : ''}<div style="margin-top:2px;"><button onclick="TransaksiModule.updateQty('${item.prodId || item.name}', -1)" style="padding:1px 6px; font-size:0.75rem;">-</button><button onclick="TransaksiModule.updateQty('${item.prodId || item.name}', 1)" style="padding:1px 6px; font-size:0.75rem;">+</button></div>`;
+                    rightDiv.innerHTML = `<div>Rp ${lineTotal.toLocaleString()}</div>${item.taxEnabled ? `<div style="font-size:0.65rem; color:#d97706;">+Rp ${lineTax.toLocaleString()} pajak</div>` : ''}<div style="margin-top:4px; display:flex; gap:8px;"><button onclick="TransaksiModule.updateQty('${item.prodId}', -1, '${item.satuanJual||'pcs'}')" style="padding:4px 10px; font-size:0.85rem;">-</button><button onclick="TransaksiModule.updateQty('${item.prodId}', 1, '${item.satuanJual||'pcs'}')" style="padding:4px 10px; font-size:0.85rem;">+</button></div>`;
                 }
             } else if (!item || item.qty <= 0) {
                 if (itemEl) itemEl.remove();
@@ -1082,7 +1108,7 @@ const TransaksiModule = {
         }
     },
 
-    addItemByProduct(prodId) {
+    addItemByProduct(prodId, satuanJualParam='pcs') {
         const prod = this.products.find(p => String(p.id) === String(prodId));
         if (!prod) return;
         if (this.isProductExpired(prod)) {
@@ -1096,18 +1122,33 @@ const TransaksiModule = {
             alert(`Stok ${prod.name} habis, tidak bisa ditambahkan ke keranjang!`);
             return;
         }
-        const existing = this.cart.find(i => String(i.prodId) === String(prod.id));
-        const qtyInCart = existing ? Number(existing.qty) : 0;
-        if (qtyInCart + 1 > stok) {
+        const isi = this.getIsiPerSatuan(prod);
+        let satuanJual = satuanJualParam || 'pcs';
+        let price = Number(prod.hargaJualPcs || prod.price || 0);
+        let pcsPerItem = 1;
+        if(satuanJual !== 'pcs' && isi>1){
+            pcsPerItem = isi;
+            price = Number(prod.hargaJualDus || prod.hargaJualGrosir || prod.hargaJualPcs || prod.price || 0);
+        }
+        const totalPcsInCart = this.cart.filter(i=>String(i.prodId)===String(prod.id)).reduce((a,b)=>a+Number(b.pcsKeluar||b.qty||0),0);
+        if (totalPcsInCart + pcsPerItem > stok) {
             Scanner.releaseProcessing();
-            alert(`Stok ${prod.name} tidak cukup! Sisa stok: ${stok}, di keranjang: ${qtyInCart}`);
+            alert(`Stok ${prod.name} tidak cukup!\nSisa: ${this.formatStokGrosir(prod)} (${stok} pcs)\nDi keranjang: ${totalPcsInCart} pcs`);
             return;
         }
-        this.addItem(prod.name, prod.price, prod.id, prod.buyPrice || prod.modal || 0, prod.taxEnabled || false, prod.taxRate ?? prod.taxPercent ?? 11);
+        const existing = this.cart.find(i => String(i.prodId) === String(prod.id) && (i.satuanJual||'pcs')===satuanJual);
+        if(existing){
+            existing.qty += 1;
+            existing.pcsKeluar = (existing.pcsKeluar||0) + pcsPerItem;
+        } else {
+            this.addItem(prod.name, price, prod.id, prod.buyPrice || prod.modal || 0, prod.taxEnabled || false, prod.taxRate ?? prod.taxPercent ?? 11, satuanJual, pcsPerItem, isi);
+        }
+        window._transaksiAutoFocusCart=true; window._transaksiAutoFocusProdId=prodId;
+        window.app.loadModule('transaksi');
+        Scanner.releaseProcessing();
     },
 
-    addItem(name, price, prodId = null, buyPrice = 0, taxEnabled = false, taxRate = 11) {
-        // === CEK EXPIRED DULU - JANGAN IJINKAN KE KERANJANG ===
+    addItem(name, price, prodId = null, buyPrice = 0, taxEnabled = false, taxRate = 11, satuanJual='pcs', pcsKeluar=1, isiPerSatuan=1) {
         if (prodId) {
             const prod = this.products.find(p => String(p.id) === String(prodId));
             if (prod && this.isProductExpired(prod)) {
@@ -1116,7 +1157,9 @@ const TransaksiModule = {
                 return;
             }
         }
-        // Cek stok jika ada prodId
+        const _satuanJual = (typeof satuanJual === 'string' ? satuanJual : 'pcs') || 'pcs';
+        const _pcsKeluar = Number(pcsKeluar||1);
+        const _isiPerSatuan = Number(isiPerSatuan||1);
         if (prodId) {
             const prod = this.products.find(p => String(p.id) === String(prodId));
             if (prod) {
@@ -1126,31 +1169,34 @@ const TransaksiModule = {
                     alert(`Stok ${prod.name} habis!`);
                     return;
                 }
-                const existing = this.cart.find(i => (String(i.prodId) === String(prodId)) || i.name === name);
-                const qtyInCart = existing ? Number(existing.qty) : 0;
-                if (qtyInCart + 1 > stok) {
+                const totalPcsInCart = this.cart.filter(i=>String(i.prodId)===String(prodId)).reduce((a,b)=>a+Number(b.pcsKeluar||b.qty||0),0);
+                if (totalPcsInCart + _pcsKeluar > stok) {
                     Scanner.releaseProcessing();
-                    alert(`Stok ${prod.name} tidak cukup! Sisa: ${stok}, di keranjang: ${qtyInCart}`);
+                    alert(`Stok ${prod.name} tidak cukup! Sisa: ${this.formatStokGrosir(prod)} (${stok} pcs), di keranjang: ${totalPcsInCart} pcs`);
                     return;
                 }
             }
         }
-        const existing = this.cart.find(i => (prodId && String(i.prodId) === String(prodId)) || i.name === name);
+        const existing = this.cart.find(i => (prodId && String(i.prodId) === String(prodId) && (i.satuanJual||'pcs')===_satuanJual) || (!prodId && i.name === name && (i.satuanJual||'pcs')===_satuanJual));
         if (existing) {
-            existing.qty++;
+            existing.qty += 1;
+            existing.pcsKeluar = (existing.pcsKeluar||0) + _pcsKeluar;
         } else {
             this.cart.push({ 
                 prodId, 
                 name, 
                 price: Number(price), 
-                buyPrice: Number(buyPrice), 
+                buyPrice: Number(buyPrice),
+                buyPricePerPcs: Number(buyPrice) / (_pcsKeluar||1) || Number(buyPrice),
                 qty: 1,
+                satuanJual: _satuanJual,
+                pcsKeluar: _pcsKeluar,
+                isiPerSatuan: _isiPerSatuan,
                 taxEnabled: !!taxEnabled,
                 taxRate: Number(taxRate) || 11
             });
         }
         Scanner.releaseProcessing();
-        // FLAG auto fokus ke cart setelah insert
         window._transaksiAutoFocusCart = true;
         window._transaksiAutoFocusProdId = prodId;
         window.app.loadModule('transaksi');

@@ -11,6 +11,26 @@ const ProdukModule = {
     filterStatus: 'all', // all | baik | near_expired | expired | rusak | opname
     showDisposalLog: false,
 
+    // === PATCH GROSIR - TAMBAHAN, TIDAK MERUBAH LOGIC LAMA ===
+    getIsiPerSatuan(p){ return Number(p.isiPerSatuan || p.isiPerDus || p.isi || 1); },
+    getSatuanBeli(p){ return p.satuanBeli || 'dus'; },
+    formatStokGrosir(p){
+        const stock = Number(p.stock||0);
+        const isi = this.getIsiPerSatuan(p);
+        const satuan = this.getSatuanBeli(p);
+        if(isi<=1 || satuan==='pcs' || satuan==='') return `${stock} pcs`;
+        const dus = Math.floor(stock/isi);
+        const sisa = stock % isi;
+        if(dus>0 && sisa>0) return `${dus} ${satuan} ${sisa} pcs (${stock} pcs)`;
+        if(dus>0) return `${dus} ${satuan} (${stock} pcs)`;
+        return `${stock} pcs`;
+    },
+    getHargaBeliPerPcs(p){
+        if(p.hargaBeliDus && this.getIsiPerSatuan(p)>1) return Number(p.hargaBeliDus)/this.getIsiPerSatuan(p);
+        return Number(p.buyPrice ?? p.costPrice ?? 0);
+    },
+
+
 
     // === HELPER EXPIRED / RUSAK - CENTRAL DI PRODUK.JS ===
     getExpiredInfo(p) {
@@ -52,7 +72,7 @@ const ProdukModule = {
         all.forEach(p=>{
             const info = this.getExpiredInfo(p);
             const stock = Number(p.stock||p.stok||0);
-            const cost = Number(p.buyPrice ?? p.costPrice ?? 0);
+            const cost = Number(p.hargaBeliDus && (p.isiPerSatuan||p.isiPerDus||1)>1 ? Number(p.hargaBeliDus)/(p.isiPerSatuan||p.isiPerDus||1) : (p.buyPrice ?? p.costPrice ?? 0));
 
             const hasRusakLog = disposalLogs.some(l=>String(l.prodId)===String(p.id) && l.type==='rusak');
             const hasExpiredLog = disposalLogs.some(l=>String(l.prodId)===String(p.id) && l.type==='expired');
@@ -204,6 +224,15 @@ const ProdukModule = {
                         </optgroup>
                     </select>
                     
+                                        <!-- PATCH GROSIR -->
+                    <div style="display:flex; gap:4px; margin-bottom:4px;">
+                        <select id="prod-satuan-beli" class="form-control" style="flex:1;"><option value="pcs">PCS</option><option value="dus" selected>DUS</option><option value="pack">PACK</option><option value="karung">KARUNG</option></select>
+                        <input type="number" id="prod-isi-per-satuan" class="form-control" placeholder="Isi per dus" style="flex:1;" value="40">
+                    </div>
+                    <div style="display:flex; gap:4px; margin-bottom:4px;">
+                        <input type="number" id="prod-harga-beli-dus" class="form-control" placeholder="Harga Beli per Dus" style="flex:1;">
+                        <input type="number" id="prod-harga-jual-dus" class="form-control" placeholder="Harga Jual per Dus" style="flex:1;">
+                    </div>
                     <div style="display:flex; gap:4px; margin-bottom:4px;">
                         <input type="number" id="prod-buy-price" class="form-control" placeholder="Harga Beli" style="flex:1;">
                         <input type="number" id="prod-price" class="form-control" placeholder="Harga Jual" style="flex:1;">
@@ -278,14 +307,20 @@ const ProdukModule = {
                                             ${hasOpnameLog ? `<span style="font-size:0.58rem; background:#8b5cf6; color:#fff; padding:2px 6px; border-radius:10px; font-weight:600;">OPNAME ${p.opnameDiff>0?'+':''}${p.opnameDiff}</span>` : ''}
                                         </div>
                                     </div>
-                                    ${exp.hasExpiry && !isExp && !isNear && !hasRusakLog && !hasOpnameLog ? `<div><span style="font-size:0.62rem; background:var(--bg-secondary); color:var(--text-secondary); border:1px solid var(--border-color); padding:2px 7px; border-radius:10px; display:inline-flex; align-items:center; gap:3px;">📅 ${exp.labelDate}</span></div>` : ''}
-                                    <div style="font-size:0.72rem; color:var(--text-secondary); line-height:1.5; display:flex; flex-direction:column; gap:2px; align-items:flex-start; min-width:0;">
-                                        <span style="white-space:nowrap;">ID: ${p.barcode || p.id || '-'}</span>
-                                        <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; color:var(--text-secondary);">Kategori: ${p.category || 'Tanpa Kategori'}</span>
-                                        <span style="white-space:nowrap;">Stok: <b style="color:var(--text-primary);">${p.stock}</b></span>
-                                        ${p.expiredDate || exp.hasExpiry ? `<span style="white-space:nowrap;">ED: ${p.expiredDate ? (isNaN(new Date(p.expiredDate).getTime()) ? p.expiredDate : new Date(p.expiredDate).toISOString().split('T')[0]) : (exp.date ? exp.date.toISOString().split('T')[0] : exp.labelDate)}</span>` : ''}
-                                        <span style="white-space:nowrap;">Beli: <span style="color:var(--text-secondary);">Rp${(p.buyPrice ?? p.costPrice ?? 0).toLocaleString('id-ID')}</span></span>
-                                        <span style="white-space:nowrap;">Jual: <b style="color:var(--text-primary);">Rp${Number(p.price).toLocaleString('id-ID')}</b></span>
+                                    ${exp.hasExpiry && !isExp && !isNear && !hasRusakLog && !hasOpnameLog ? `<div style="margin:0; padding:0; display:flex;"><span style="font-size:0.62rem; background:var(--bg-secondary); color:var(--text-secondary); border:1px solid var(--border-color); padding:2px 7px; border-radius:10px; display:inline-flex; align-items:center; gap:3px; margin-left:0;">📅 ${exp.labelDate}</span></div>` : ''}
+                                    <div style="font-size:0.72rem; color:var(--text-secondary); line-height:1.35; display:flex; flex-direction:column; gap:2px; align-items:flex-start; min-width:0;">
+                                        <span style="display:flex; gap:6px; line-height:1.35; margin:0;"><span style="color:var(--text-secondary);">•</span> <span>ID: ${p.barcode || p.id || '-'}</span></span>
+                                        <span style="display:flex; gap:6px; line-height:1.35; margin:0; max-width:100%; overflow:hidden;"><span style="color:var(--text-secondary);">•</span> <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${p.category || 'Tanpa Kategori'}</span></span>
+                                        <span style="display:flex; gap:6px; line-height:1.35; margin:0;"><span style="color:var(--text-secondary);">•</span> <span>Stok: <b style="color:var(--text-primary);">${this.formatStokGrosir(p)}</b></span></span>
+                                        ${(p.satuanBeli && p.satuanBeli!=='pcs' && this.getIsiPerSatuan(p)>1) ? `
+                                        <div style="display:flex; flex-direction:column; gap:2px; margin-top:2px; background:rgba(14,165,233,0.08); border:1px solid rgba(14,165,233,0.15); padding:6px 8px; border-radius:8px; width:100%; box-sizing:border-box;">
+                                            <span style="font-size:0.7rem; color:var(--text-primary);">📦 1 ${p.satuanBeli} = ${this.getIsiPerSatuan(p)} pcs</span>
+                                            <span style="font-size:0.7rem; color:var(--text-secondary);">Beli ${p.satuanBeli}: Rp ${(p.hargaBeliDus||0).toLocaleString('id-ID')}</span>
+                                            <span style="font-size:0.7rem; color:var(--text-secondary);">Jual ${p.satuanBeli}: Rp ${(p.hargaJualDus||p.hargaJualGrosir||0).toLocaleString('id-ID')}</span>
+                                        </div>` : `<span style="font-size:0.68rem; opacity:0.7;">Kemasan: Eceran</span>`}
+                                        ${p.expiredDate || exp.hasExpiry ? `<span style="display:flex; gap:6px; line-height:1.35; margin:0;"><span style="color:var(--text-secondary);">•</span> <span>ED: ${p.expiredDate ? (isNaN(new Date(p.expiredDate).getTime()) ? p.expiredDate : new Date(p.expiredDate).toISOString().split('T')[0]) : (exp.date ? exp.date.toISOString().split('T')[0] : exp.labelDate)}</span></span>` : ''}
+                                        <span style="display:flex; gap:6px; line-height:1.35; margin:0;"><span style="color:var(--text-secondary);">•</span> <span>Beli: <span style="color:var(--text-secondary);">Rp${(p.buyPrice ?? p.costPrice ?? 0).toLocaleString('id-ID')}/pcs</span></span></span>
+                                        <span style="display:flex; gap:6px; line-height:1.35; margin:0;"><span style="color:var(--text-secondary);">•</span> <span>Jual: <b style="color:var(--text-primary);">Rp${Number(p.price).toLocaleString('id-ID')}/pcs</b></span></span>
                                     </div>
                                     ${(() => {
                                         // Hitung total rusak dari log (bukan cuma disposal terakhir)
@@ -315,7 +350,7 @@ const ProdukModule = {
                                 <div style="display:flex; flex-direction:column; gap:5px; margin-left:6px; min-width:86px; max-width:90px; flex-shrink:0;">
                                     <button class="btn-touch btn-edit-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.68rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:8px; display:flex; align-items:center; justify-content:center; gap:4px;">✏️ Edit</button>
                                     <button class="btn-touch btn-delete-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.68rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:8px; display:flex; align-items:center; justify-content:center; gap:4px;">🗑️ Hapus</button>
-                                    ${!isExp && !isRusak ? `<button class="btn-touch btn-rusak-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.65rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:8px;">Rusak</button>` : ''}
+                                    ${!isExp && !isRusak ? `<button class="btn-touch btn-rusak-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.68rem; font-weight:700; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); color:#ef4444; border-radius:8px; display:flex; align-items:center; justify-content:center; gap:4px;">❌ Rusak</button>` : ''}
                                     
                                     ${isRusak ? `<button class="btn-touch btn-restore-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.65rem; font-weight:700; background:var(--success-color); color:#fff; border:1px solid var(--success-color); border-radius:8px;">↩️ Pulihkan</button>` : ''}
                                     ${!isExp ? `<button class="btn-touch btn-opname-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.65rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:8px;">📋 Opname</button>` : ''}
@@ -351,6 +386,20 @@ const ProdukModule = {
             this.resetForm();
         });
         document.getElementById('btn-save-product')?.addEventListener('click', () => this.saveProduct());
+        // AUTO ISI HARGA BELI PCS - TANPA LIVE PREVIEW
+        const _isiEl2 = document.getElementById('prod-isi-per-satuan');
+        const _hargaBeliDusEl2 = document.getElementById('prod-harga-beli-dus');
+        const _buyEl2 = document.getElementById('prod-buy-price');
+        const _autoBuy = ()=>{
+            const isi = Number(_isiEl2?.value)||1;
+            const hargaBeliDus = Number(_hargaBeliDusEl2?.value)||0;
+            if(hargaBeliDus>0 && isi>1 && _buyEl2){
+                _buyEl2.value = Math.round(hargaBeliDus/isi);
+            }
+        };
+        _isiEl2?.addEventListener('input', _autoBuy);
+        _hargaBeliDusEl2?.addEventListener('input', _autoBuy);
+
         document.getElementById('btn-export-products')?.addEventListener('click', () => this.exportProductsCSV());
         document.getElementById('btn-trigger-import')?.addEventListener('click', () => document.getElementById('file-import-products')?.click());
         document.getElementById('file-import-products')?.addEventListener('change', (e) => this.importProductsCSV(e));
@@ -497,7 +546,7 @@ const ProdukModule = {
                         <button class="btn-touch btn-delete-prod" data-id="${p.id}" style="padding:5px 6px; font-size:0.65rem; border:1px solid #ef4444; color:#ef4444;">🗑️</button>
                     </div>
                     <div style="display:flex; gap:4px; flex-wrap:wrap;">
-                        ${!isExp && !isRusak ? `<button class="btn-touch btn-rusak-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem;">Rusak</button>` : ''}
+                        ${!isExp && !isRusak ? `<button class="btn-touch btn-rusak-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.68rem; font-weight:700; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); color:#ef4444; border-radius:8px; display:flex; align-items:center; justify-content:center; gap:4px;">❌ Rusak</button>` : ''}
                         
                         ${isRusak ? `<button class="btn-touch btn-restore-prod" data-id="${p.id}" style="flex:1; padding:4px 6px; font-size:0.6rem; background:#22c55e; color:#fff; border:none;">↩️ Pulihkan</button>` : ''}
                         ${!isExp ? `<button class="btn-touch btn-opname-prod" data-id="${p.id}" style="padding:4px 6px; font-size:0.6rem;">📋 Opname</button>` : ''}
@@ -572,14 +621,38 @@ const ProdukModule = {
             this.scannerActive = false;
             Scanner.stopCamera();
 
+            const satuanBeliEl = document.getElementById('prod-satuan-beli');
+            const isiEl = document.getElementById('prod-isi-per-satuan');
+            const hargaBeliDusEl = document.getElementById('prod-harga-beli-dus');
+            const hargaJualDusEl = document.getElementById('prod-harga-jual-dus');
+            const satuanBeli = satuanBeliEl?.value || 'pcs';
+            const isiPerSatuan = Number(isiEl?.value) || 1;
+            const hargaBeliDus = Number(hargaBeliDusEl?.value) || 0;
+            const hargaJualDus = Number(hargaJualDusEl?.value) || 0;
+            let finalBuyPrice = buyPrice;
+            if(hargaBeliDus>0 && isiPerSatuan>1){ finalBuyPrice = hargaBeliDus / isiPerSatuan; }
+            // AUTO KONVERSI: jika satuan beli bukan pcs, stok input dianggap dalam satuan tersebut
+            let finalStock = stock;
+            if(satuanBeli !== 'pcs' && isiPerSatuan>1){
+                // Jika ini produk baru (id kosong) atau user input stok dalam satuan grosir, konversi ke pcs
+                // Untuk edit, stock input sudah dalam satuan grosir (dari editProduct), jadi tetap konversi
+                finalStock = Math.round(stock * isiPerSatuan);
+            }
             const payload = {
                 barcode,
                 name,
                 category,
-                buyPrice,
-                costPrice: buyPrice,
+                buyPrice: finalBuyPrice,
+                costPrice: finalBuyPrice,
                 price,
-                stock,
+                stock: finalStock,
+                satuanBeli,
+                isiPerSatuan,
+                isiPerDus: isiPerSatuan,
+                hargaBeliDus,
+                hargaJualDus,
+                hargaJualGrosir: hargaJualDus,
+                hargaJualPcs: price,
                 minStock,
                 min_stock: minStock,
                 expiredDate,
@@ -607,7 +680,15 @@ const ProdukModule = {
     async quickRestock(id, qty) {
         const prod = this.products.find(p => String(p.id) === String(id));
         if (prod) {
-            prod.stock = Number(prod.stock) + qty;
+            const isi = Number(prod.isiPerSatuan||prod.isiPerDus||1);
+            const satuan = prod.satuanBeli||'pcs';
+            let addPcs = qty;
+            if(satuan!=='pcs' && isi>1){
+                // qty dianggap dalam satuan grosir jika qty kecil, konversi ke pcs
+                // Contoh quickRestock(2 dus) -> +80 pcs
+                addPcs = qty * isi;
+            }
+            prod.stock = Number(prod.stock) + addPcs;
             await DB.saveProduct(prod);
             Scanner.releaseProcessing();
             window.app.loadModule('produk');
@@ -616,6 +697,19 @@ const ProdukModule = {
 
     async editProduct(id) {
         const p = this.products.find(item => String(item.id) === String(id));
+        // Auto konversi stok ke satuan saat edit agar user lihat dalam dus/pak
+        const _isiForEdit = Number(p.isiPerSatuan || p.isiPerDus || 1);
+        const _satuanForEdit = p.satuanBeli || 'pcs';
+        const stockInput = document.getElementById('prod-stock');
+        if(stockInput){
+            if(_satuanForEdit !== 'pcs' && _isiForEdit>1){
+                stockInput.value = (Number(p.stock||0) / _isiForEdit);
+                stockInput.placeholder = `Stok dalam ${_satuanForEdit} (akan jadi ${p.stock} pcs)`;
+            } else {
+                stockInput.value = p.stock;
+            }
+        }
+        setTimeout(()=>{ const a=document.getElementByIdntById('prod-satuan-beli'); const b=document.getElementById('prod-isi-per-satuan'); const c=document.getElementById('prod-harga-beli-dus'); const d=document.getElementById('prod-harga-jual-dus'); if(a) a.value=p.satuanBeli||'pcs'; if(b) b.value=p.isiPerSatuan||p.isiPerDus||1; if(c) c.value=p.hargaBeliDus||''; if(d) d.value=p.hargaJualDus||p.hargaJualGrosir||''; },100);
         if (!p) {
             alert('Produk tidak ditemukan: ' + id);
             return;
