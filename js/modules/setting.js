@@ -4,183 +4,186 @@ import DB from './db.js';
 
 const SettingModule = {
     render() {
+        const currentTheme = localStorage.getItem('edc_theme') || 'dark';
+        const currentAccent = localStorage.getItem('edc_accent') || '#2563eb';
         const scannerMode = localStorage.getItem('edc_scanner_mode') || 'camera';
         const printerType = localStorage.getItem('edc_printer_type') || 'bluetooth';
         const dbMode = localStorage.getItem('edc_db_mode') || 'local';
         const config = JSON.parse(localStorage.getItem('edc_firebase_config') || '{}');
-
-        // Scanner Device Config Baru
-        const scannerDeviceType = localStorage.getItem('edc_scanner_device_type') || 'hid_keyboard'; // hid_keyboard | bluetooth_ble | serial | usb_hid
+        const scannerDeviceType = localStorage.getItem('edc_scanner_device_type') || 'hid_keyboard';
         const scannerTerminator = localStorage.getItem('edc_scanner_terminator') || 'enter';
         const scannerMinLen = localStorage.getItem('edc_scanner_min_len') || '3';
         const scannerBufferTimeout = localStorage.getItem('edc_scanner_buffer_timeout') || '300';
         const scannerBtName = localStorage.getItem('edc_scanner_bt_name') || '';
         const scannerLastTest = localStorage.getItem('edc_scanner_last_test') || '';
-
-        // Load Admin & Operator List
         const adminAccount = JSON.parse(localStorage.getItem('edc_admin_account') || '{"username":"admin","pin":"1234"}');
         const operators = JSON.parse(localStorage.getItem('edc_operators') || '[]');
 
         return `
-            <div class="setting-section" style="padding-bottom: 30px;">
-                <h3>Pengaturan Sistem</h3>
-
-                <!-- PENGELOLAAN HAK AKSES & AKUN (ADMIN & OPERATOR) -->
-                <div class="setting-card" style="border-left: 4px solid #2563eb;">
-                    <h4>Pengelolaan Akun & Hak Akses</h4>
-                    
-                    <div style="background: #eff6ff; padding: 10px; border-radius: 6px; margin-bottom: 12px; border: 1px solid #bfdbfe;">
-                        <h5 style="margin-bottom: 6px; color: #1e3a8a;">Pengaturan Akun Admin Utama</h5>
-                        <small style="display:block; color:#475569; margin-bottom:6px;">Username: <b>${adminAccount.username}</b></small>
-                        <input type="password" id="input-admin-old-pin" class="form-control" placeholder="PIN Lama Admin" style="margin-bottom:6px; width:100%; padding:6px;">
-                        <input type="password" id="input-admin-new-pin" class="form-control" placeholder="PIN Baru Admin" style="margin-bottom:6px; width:100%; padding:6px;">
-                        <button class="btn-touch" id="btn-update-admin-pin" style="width:100%; background: #0284c7; color:white; padding:8px;">Update PIN Admin</button>
-                    </div>
-                    <div style="margin-top: 12px;">
-                        <h5 style="margin-bottom: 6px;">Tambah Operator / Kasir Baru</h5>
-                        <input type="text" id="input-op-name" class="form-control" placeholder="Nama Kasir / Operator" style="margin-bottom:6px; width:100%; padding:6px;">
-                        <input type="password" id="input-op-pin" class="form-control" placeholder="PIN / Password Operator" style="margin-bottom:6px; width:100%; padding:6px;">
-                        <button class="btn-touch" id="btn-add-operator" style="width:100%; background: #10b981; color:white; padding:8px;">+ Simpan Operator</button>
-                    </div>
-                    <div style="margin-top: 12px;">
-                        <h5 style="margin-bottom: 6px;">Daftar Operator Terdaftar</h5>
-                        <ul style="list-style:none; padding:0; font-size:0.85rem;" id="list-operators">
-                            ${operators.length === 0 ? '<li style="color:#94a3b8;">Belum ada operator tambahan.</li>' : ''}
-                            ${operators.map(op => `
-                                <li style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #e2e8f0;">
-                                    <span>👤 <b>${op.name}</b> (Role: ${op.role.toUpperCase()})</span>
-                                    <button class="btn-delete-op" data-id="${op.id}" style="color:#ef4444; background:none; border:none; cursor:pointer; font-weight:bold;">Hapus</button>
-                                </li>
-                            `).join('')}
-                        </ul>
-                    </div>
+            <div class="setting-section" style="padding-bottom:40px;">
+                <div style="text-align:center; margin-bottom:18px;">
+                    <div style="font-size:32px;">⚙️</div>
+                    <h3 style="color:var(--text-primary); font-size:1.2rem; font-weight:800; margin:4px 0 0 0;">Pengaturan Sistem</h3>
+                    <p style="color:var(--text-secondary); font-size:0.78rem; margin-top:4px;">Kelola akun, database, tema, scanner & printer</p>
                 </div>
 
-                <!-- SETTING DATABASE -->
-                <div class="setting-card">
-                    <h4>Mode Database</h4>
-                    <div class="btn-group" style="display:flex; gap:8px; margin-bottom:10px;">
-                        <button id="btn-db-local" class="btn-touch ${dbMode === 'local' ? 'active' : ''}" style="flex:1; padding:8px; background:${dbMode==='local'?'#10b981':'#e2e8f0'}; color:${dbMode==='local'?'white':'#334155'};">📱 Local (IndexedDB)</button>
-                        <button id="btn-db-cloud" class="btn-touch ${dbMode === 'cloud' ? 'active' : ''}" style="flex:1; padding:8px; background:${dbMode==='cloud'?'#10b981':'#e2e8f0'}; color:${dbMode==='cloud'?'white':'#334155'};">☁️ Cloud (Firestore)</button>
+                <div class="setting-card" style="background:var(--bg-card); border:1px solid var(--border-color); border-left:4px solid var(--accent-color, #2563eb); border-radius:16px; padding:16px; margin-bottom:14px;">
+                    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+                        <div style="width:36px; height:36px; background:var(--accent-color, #2563eb); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px;">👥</div>
+                        <div>
+                            <h4 style="color:var(--text-primary); margin:0; font-size:0.95rem; font-weight:700;">👥 Akun & Hak Akses</h4>
+                            <small style="color:var(--text-secondary); font-size:0.72rem;">Admin & operator kasir</small>
+                        </div>
                     </div>
-                    <div id="firestore-config" style="display:${dbMode==='cloud' || config.apiKey ? 'block':'none'}; background:#f8fafc; padding:10px; border-radius:6px; border:1px solid #e2e8f0;">
-                        <h5 style="margin-bottom:6px;">Konfigurasi Firebase</h5>
-                        <input type="text" id="fb-apiKey" class="form-control" placeholder="API Key" value="${config.apiKey || ''}" style="margin-bottom:6px; width:100%; padding:6px;">
-                        <input type="text" id="fb-projectId" class="form-control" placeholder="Project ID" value="${config.projectId || ''}" style="margin-bottom:6px; width:100%; padding:6px;">
-                        <div style="display:flex; gap:6px;">
-                            <button id="btn-test-db-config" class="btn-touch" style="flex:1; background:#0ea5e9; color:white; padding:6px;">Tes Koneksi</button>
-                            <button id="btn-save-db-config" class="btn-touch" style="flex:1; background:#2563eb; color:white; padding:6px;">Simpan Config</button>
+                    <div style="background:var(--bg-primary); border:1px solid var(--border-color); border-radius:12px; padding:12px; margin-bottom:12px;">
+                        <h5 style="color:var(--text-primary); font-size:0.85rem; margin:0 0 8px 0;">🔐 Admin Utama @${adminAccount.username}</h5>
+                        <input type="password" id="input-admin-old-pin" placeholder="🔑 PIN Lama" style="width:100%; padding:10px 12px; margin-bottom:8px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; color:var(--text-primary);">
+                        <input type="password" id="input-admin-new-pin" placeholder="✨ PIN Baru" style="width:100%; padding:10px 12px; margin-bottom:10px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; color:var(--text-primary);">
+                        <button id="btn-update-admin-pin" style="width:100%; background:var(--accent-color, #2563eb); color:white; padding:10px; border-radius:10px; border:none; font-weight:600;">💾 Update PIN Admin</button>
+                    </div>
+                    <div style="background:var(--bg-primary); border:1px solid var(--border-color); border-radius:12px; padding:12px;">
+                        <h5 style="color:var(--text-primary); font-size:0.85rem; margin:0 0 8px 0;">👤 Tambah Operator</h5>
+                        <input type="text" id="input-op-name" placeholder="🧑 Nama Operator" style="width:100%; padding:10px 12px; margin-bottom:8px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; color:var(--text-primary);">
+                        <input type="password" id="input-op-pin" placeholder="🔒 PIN Operator" style="width:100%; padding:10px 12px; margin-bottom:10px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; color:var(--text-primary);">
+                        <button id="btn-add-operator" style="width:100%; background:#10b981; color:white; padding:10px; border-radius:10px; border:none; font-weight:600;">➕ Simpan Operator</button>
+                        <div style="margin-top:12px; border-top:1px dashed var(--border-color); padding-top:10px;">
+                            <h5 style="color:var(--text-secondary); font-size:0.75rem; margin:0 0 8px 0;">📋 Daftar Operator (${operators.length})</h5>
+                            <ul id="list-operators" style="list-style:none; padding:0; margin:0;">
+                                ${operators.length === 0 ? '<li style="color:var(--text-secondary); font-size:0.8rem; text-align:center; padding:8px; background:var(--bg-secondary); border-radius:8px;">🤷 Belum ada operator</li>' : ''}
+                                ${operators.map(op => `
+                                    <li style="display:flex; justify-content:space-between; align-items:center; padding:9px 10px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; margin-bottom:6px;">
+                                        <span style="color:var(--text-primary); font-size:0.85rem;">👤 <b>${op.name}</b> <small style="color:var(--text-secondary);">${op.role.toUpperCase()}</small></span>
+                                        <button class="btn-delete-op" data-id="${op.id}" style="color:#ef4444; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.2); padding:4px 10px; border-radius:7px; font-weight:700; font-size:0.7rem;">🗑️ Hapus</button>
+                                    </li>
+                                `).join('')}
+                            </ul>
                         </div>
                     </div>
                 </div>
 
-                <!-- SETTING SCANNER - BARU LENGKAP -->
-                <div class="setting-card" style="border-left: 4px solid #7c3aed;">
-                    <h4>📷 Mode Scanner</h4>
-                    <div class="btn-group" style="display:flex; gap:8px; margin-bottom:12px;">
-                        <button id="btn-scanner-camera" class="btn-touch ${scannerMode === 'camera' ? 'active' : ''}" style="flex:1; padding:8px; background:${scannerMode==='camera'?'#7c3aed':'#e2e8f0'}; color:${scannerMode==='camera'?'white':'#334155'};">📷 Kamera HP</button>
-                        <button id="btn-scanner-device" class="btn-touch ${scannerMode === 'device' ? 'active' : ''}" style="flex:1; padding:8px; background:${scannerMode==='device'?'#7c3aed':'#e2e8f0'}; color:${scannerMode==='device'?'white':'#334155'};">🔌 Device Scanner</button>
+                <div class="setting-card" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:16px; padding:16px; margin-bottom:14px;">
+                    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+                        <div style="width:36px; height:36px; background:#10b981; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px;">🗄️</div>
+                        <div>
+                            <h4 style="color:var(--text-primary); margin:0; font-size:0.95rem; font-weight:700;">🗄️ Mode Database</h4>
+                            <small style="color:var(--text-secondary); font-size:0.72rem;">Local atau Cloud Firestore</small>
+                        </div>
                     </div>
+                    <div style="display:flex; gap:8px; margin-bottom:12px;">
+                        <button id="btn-db-local" class="btn-touch ${dbMode === 'local' ? 'active' : ''}" style="flex:1; padding:11px; background:${dbMode==='local'?'#10b981':'var(--bg-secondary)'}; color:${dbMode==='local'?'white':'var(--text-primary)'}; border:1px solid var(--border-color); border-radius:10px; font-weight:600;">📱 Local</button>
+                        <button id="btn-db-cloud" class="btn-touch ${dbMode === 'cloud' ? 'active' : ''}" style="flex:1; padding:11px; background:${dbMode==='cloud'?'#10b981':'var(--bg-secondary)'}; color:${dbMode==='cloud'?'white':'var(--text-primary)'}; border:1px solid var(--border-color); border-radius:10px; font-weight:600;">☁️ Cloud</button>
+                    </div>
+                    <div id="firestore-config" style="display:${dbMode==='cloud' || config.apiKey ? 'block':'none'}; background:var(--bg-primary); padding:12px; border-radius:12px; border:1px solid var(--border-color);">
+                        <h5 style="color:var(--text-primary); font-size:0.8rem; margin:0 0 8px 0;">🔧 Konfigurasi Firebase</h5>
+                        <input type="text" id="fb-apiKey" placeholder="🔑 API Key" value="${config.apiKey || ''}" style="width:100%; padding:10px 12px; margin-bottom:8px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; color:var(--text-primary);">
+                        <input type="text" id="fb-projectId" placeholder="🆔 Project ID" value="${config.projectId || ''}" style="width:100%; padding:10px 12px; margin-bottom:10px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; color:var(--text-primary);">
+                        <div style="display:flex; gap:8px;">
+                            <button id="btn-test-db-config" style="flex:1; background:#0ea5e9; color:white; padding:10px; border-radius:10px; border:none; font-weight:600;">🔍 Tes Koneksi</button>
+                            <button id="btn-save-db-config" style="flex:1; background:var(--accent-color, #2563eb); color:white; padding:10px; border-radius:10px; border:none; font-weight:600;">💾 Simpan</button>
+                        </div>
+                    </div>
+                </div>
 
-                    <!-- PANEL KONFIGURASI DEVICE SCANNER -->
-                    <div id="scanner-device-panel" style="display:${scannerMode==='device' ? 'block' : 'none'}; background:#faf5ff; padding:12px; border-radius:8px; border:1px solid #ddd6fe;">
-                        
-                        <h5 style="margin-bottom:8px; color:#5b21b6;">⚙️ Konfigurasi Device Scanner</h5>
-                        
-                        <!-- STATUS KONEKSI -->
-                        <div id="scanner-connection-status" style="padding:8px; border-radius:6px; margin-bottom:10px; background:${scannerLastTest ? '#dcfce7' : '#fef3c7'}; border:1px solid ${scannerLastTest ? '#86efac' : '#fde68a'};">
-                            <div style="font-size:0.8rem; display:flex; justify-content:space-between;">
-                                <span>📡 Status: <b id="scanner-status-text">${scannerLastTest ? 'Terhubung - ' + scannerLastTest : 'Belum Dites'}</b></span>
+                <div class="setting-card" style="background:var(--bg-card); border:1px solid var(--border-color); border-left:4px solid #f59e0b; border-radius:16px; padding:16px; margin-bottom:14px;">
+                    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+                        <div style="width:36px; height:36px; background:linear-gradient(135deg, #f59e0b, #ec4899); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px;">🎨</div>
+                        <div>
+                            <h4 style="color:var(--text-primary); margin:0; font-size:0.95rem; font-weight:700;">🎨 Tema Aplikasi</h4>
+                            <small style="color:var(--text-secondary); font-size:0.72rem;">Tampilan nyaman untuk kasir</small>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:8px; margin-bottom:14px;">
+                        <button id="btn-theme-dark" class="btn-touch ${currentTheme === 'dark' ? 'active' : ''}" style="flex:1; padding:12px 6px; background:${currentTheme==='dark'?'#1e293b':'var(--bg-secondary)'}; color:${currentTheme==='dark'?'white':'var(--text-primary)'}; border:2px solid ${currentTheme==='dark'?'var(--accent-color)':'var(--border-color)'}; border-radius:12px; font-weight:600; font-size:0.8rem;">🌙<br>Gelap</button>
+                        <button id="btn-theme-light" class="btn-touch ${currentTheme === 'light' ? 'active' : ''}" style="flex:1; padding:12px 6px; background:${currentTheme==='light'?'#ffffff':'var(--bg-secondary)'}; color:${currentTheme==='light'?'#0f172a':'var(--text-primary)'}; border:2px solid ${currentTheme==='light'?'var(--accent-color)':'var(--border-color)'}; border-radius:12px; font-weight:600; font-size:0.8rem;">☀️<br>Terang</button>
+                        <button id="btn-theme-auto" class="btn-touch ${currentTheme === 'auto' ? 'active' : ''}" style="flex:1; padding:12px 6px; background:${currentTheme==='auto'?'#f59e0b':'var(--bg-secondary)'}; color:${currentTheme==='auto'?'white':'var(--text-primary)'}; border:2px solid ${currentTheme==='auto'?'#f59e0b':'var(--border-color)'}; border-radius:12px; font-weight:600; font-size:0.8rem;">🔄<br>Auto</button>
+                    </div>
+                    <div style="background:var(--bg-primary); padding:12px; border-radius:12px; border:1px solid var(--border-color);">
+                        <h5 style="margin-bottom:10px; font-size:0.8rem; color:var(--text-primary);">🌈 Warna Aksen</h5>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center;">
+                            <button class="btn-accent" data-color="#2563eb" style="width:40px; height:40px; border-radius:50%; background:#2563eb; border:3px solid ${currentAccent==='#2563eb'?'var(--bg-card)':'transparent'}; outline:3px solid ${currentAccent==='#2563eb'?'#2563eb':'transparent'};"></button>
+                            <button class="btn-accent" data-color="#10b981" style="width:40px; height:40px; border-radius:50%; background:#10b981; border:3px solid ${currentAccent==='#10b981'?'var(--bg-card)':'transparent'}; outline:3px solid ${currentAccent==='#10b981'?'#10b981':'transparent'};"></button>
+                            <button class="btn-accent" data-color="#f59e0b" style="width:40px; height:40px; border-radius:50%; background:#f59e0b; border:3px solid ${currentAccent==='#f59e0b'?'var(--bg-card)':'transparent'}; outline:3px solid ${currentAccent==='#f59e0b'?'#f59e0b':'transparent'};"></button>
+                            <button class="btn-accent" data-color="#ef4444" style="width:40px; height:40px; border-radius:50%; background:#ef4444; border:3px solid ${currentAccent==='#ef4444'?'var(--bg-card)':'transparent'}; outline:3px solid ${currentAccent==='#ef4444'?'#ef4444':'transparent'};"></button>
+                            <button class="btn-accent" data-color="#8b5cf6" style="width:40px; height:40px; border-radius:50%; background:#8b5cf6; border:3px solid ${currentAccent==='#8b5cf6'?'var(--bg-card)':'transparent'}; outline:3px solid ${currentAccent==='#8b5cf6'?'#8b5cf6':'transparent'};"></button>
+                            <button class="btn-accent" data-color="#ec4899" style="width:40px; height:40px; border-radius:50%; background:#ec4899; border:3px solid ${currentAccent==='#ec4899'?'var(--bg-card)':'transparent'}; outline:3px solid ${currentAccent==='#ec4899'?'#ec4899':'transparent'};"></button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="setting-card" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:16px; padding:16px; margin-bottom:14px;">
+                    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+                        <div style="width:36px; height:36px; background:#7c3aed; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px;">📷</div>
+                        <div>
+                            <h4 style="color:var(--text-primary); margin:0; font-size:0.95rem; font-weight:700;">📷 Mode Scanner</h4>
+                            <small style="color:var(--text-secondary); font-size:0.72rem;">Kamera HP atau device eksternal</small>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:8px; margin-bottom:12px;">
+                        <button id="btn-scanner-camera" style="flex:1; padding:11px; background:${scannerMode==='camera'?'#7c3aed':'var(--bg-secondary)'}; color:${scannerMode==='camera'?'white':'var(--text-primary)'}; border-radius:10px; border:1px solid var(--border-color); font-weight:600;">📱 Kamera HP</button>
+                        <button id="btn-scanner-device" style="flex:1; padding:11px; background:${scannerMode==='device'?'#7c3aed':'var(--bg-secondary)'}; color:${scannerMode==='device'?'white':'var(--text-primary)'}; border-radius:10px; border:1px solid var(--border-color); font-weight:600;">🔌 Device</button>
+                    </div>
+                    <div id="scanner-device-panel" style="display:${scannerMode==='device' ? 'block' : 'none'}; background:var(--bg-primary); padding:12px; border-radius:12px; border:1px solid var(--border-color);">
+                        <h5 style="color:var(--text-primary); font-size:0.85rem; margin:0 0 10px 0;">⚙️ Konfigurasi Device</h5>
+                        <div id="scanner-connection-status" style="padding:10px; border-radius:10px; margin-bottom:10px; background:var(--bg-secondary); border:1px solid var(--border-color);">
+                            <div style="font-size:0.8rem; display:flex; justify-content:space-between; color:var(--text-primary);">
+                                <span>📡 Status: <b id="scanner-status-text">${scannerLastTest ? 'Terhubung - ' + scannerLastTest : '⏳ Belum Dites'}</b></span>
                                 <span id="scanner-status-dot" style="width:10px; height:10px; border-radius:50%; background:${scannerLastTest ? '#16a34a' : '#d97706'}; display:inline-block;"></span>
                             </div>
-                            ${scannerBtName ? `<small style="font-size:0.75rem; color:#6b7280;">Device: ${scannerBtName} (${scannerDeviceType})</small>` : ''}
+                            ${scannerBtName ? `<small style="font-size:0.72rem; color:var(--text-secondary);">🔗 Device: ${scannerBtName} (${scannerDeviceType})</small>` : ''}
                         </div>
-
-                        <!-- JENIS KONEKSI -->
-                        <label style="font-size:0.8rem; font-weight:bold; color:#4c1d95;">Jenis Koneksi Device</label>
-                        <select id="input-scanner-device-type" class="form-control" style="width:100%; padding:6px; margin-bottom:10px; margin-top:4px;">
-                            <option value="hid_keyboard" ${scannerDeviceType==='hid_keyboard' ? 'selected' : ''}>⌨️ HID Keyboard Wedge (Kabel USB / Bluetooth Keyboard Mode) - Default</option>
-                            <option value="bluetooth_ble" ${scannerDeviceType==='bluetooth_ble' ? 'selected' : ''}>🔵 Bluetooth BLE (Web Bluetooth API)</option>
-                            <option value="serial" ${scannerDeviceType==='serial' ? 'selected' : ''}>🔌 USB Serial / COM Port (Web Serial API)</option>
-                            <option value="usb_hid" ${scannerDeviceType==='usb_hid' ? 'selected' : ''}>🎮 USB HID Raw (Web HID API)</option>
+                        <label style="font-size:0.75rem; font-weight:600; color:var(--text-secondary);">🔌 Jenis Koneksi</label>
+                        <select id="input-scanner-device-type" style="width:100%; padding:10px; margin:6px 0 10px 0; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:10px;">
+                            <option value="hid_keyboard" ${scannerDeviceType==='hid_keyboard' ? 'selected' : ''}>⌨️ HID Keyboard Wedge</option>
+                            <option value="bluetooth_ble" ${scannerDeviceType==='bluetooth_ble' ? 'selected' : ''}>🔵 Bluetooth BLE</option>
+                            <option value="serial" ${scannerDeviceType==='serial' ? 'selected' : ''}>🔌 USB Serial</option>
+                            <option value="usb_hid" ${scannerDeviceType==='usb_hid' ? 'selected' : ''}>🎮 USB HID Raw</option>
                         </select>
-
                         <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
                             <div>
-                                <label style="font-size:0.75rem; font-weight:bold;">Terminator Key</label>
-                                <select id="input-scanner-terminator" class="form-control" style="width:100%; padding:6px;">
-                                    <option value="enter" ${scannerTerminator==='enter' ? 'selected' : ''}>Enter (\\r\\n)</option>
-                                    <option value="tab" ${scannerTerminator==='tab' ? 'selected' : ''}>Tab (\\t)</option>
-                                    <option value="none" ${scannerTerminator==='none' ? 'selected' : ''}>None (Tanpa Akhiran)</option>
-                                    <option value="enter_tab" ${scannerTerminator==='enter_tab' ? 'selected' : ''}>Enter + Tab</option>
+                                <label style="font-size:0.7rem; color:var(--text-secondary);">⌨️ Terminator</label>
+                                <select id="input-scanner-terminator" style="width:100%; padding:9px; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:10px;">
+                                    <option value="enter" ${scannerTerminator==='enter' ? 'selected' : ''}>Enter</option>
+                                    <option value="tab" ${scannerTerminator==='tab' ? 'selected' : ''}>Tab</option>
+                                    <option value="none" ${scannerTerminator==='none' ? 'selected' : ''}>None</option>
+                                    <option value="enter_tab" ${scannerTerminator==='enter_tab' ? 'selected' : ''}>Enter+Tab</option>
                                 </select>
                             </div>
                             <div>
-                                <label style="font-size:0.75rem; font-weight:bold;">Min. Panjang Barcode</label>
-                                <input type="number" id="input-scanner-minlen" class="form-control" value="${scannerMinLen}" min="1" max="20" style="width:100%; padding:6px;">
+                                <label style="font-size:0.7rem; color:var(--text-secondary);">🔢 Min Length</label>
+                                <input type="number" id="input-scanner-minlen" value="${scannerMinLen}" style="width:100%; padding:9px; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:10px;">
                             </div>
                         </div>
-
                         <div style="margin-bottom:12px;">
-                            <label style="font-size:0.75rem; font-weight:bold;">Buffer Timeout (ms) - Jeda reset buffer keyboard</label>
-                            <input type="range" id="input-scanner-timeout" min="100" max="1000" step="50" value="${scannerBufferTimeout}" style="width:100%;">
-                            <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:#6b7280;">
-                                <span>100ms (Cepat)</span><span id="timeout-value">${scannerBufferTimeout}ms</span><span>1000ms (Lambat)</span>
-                            </div>
+                            <label style="font-size:0.7rem; color:var(--text-secondary);">⏱️ Timeout: <span id="timeout-value" style="color:var(--accent-color); font-weight:700;">${scannerBufferTimeout}ms</span></label>
+                            <input type="range" id="input-scanner-timeout" min="50" max="1000" step="50" value="${scannerBufferTimeout}" style="width:100%;">
                         </div>
-
-                        <!-- BUTTON TEST KONEKSI -->
-                        <div style="background:white; padding:10px; border-radius:6px; border:1px solid #e9d5ff; margin-bottom:10px;">
-                            <h6 style="margin-bottom:8px; font-size:0.85rem;">🧪 Test Koneksi & Pairing</h6>
-                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:8px;">
-                                <button id="btn-connect-bt" class="btn-touch" style="background:#3b82f6; color:white; padding:8px; font-size:0.8rem;">🔵 Pair Bluetooth</button>
-                                <button id="btn-connect-serial" class="btn-touch" style="background:#6366f1; color:white; padding:8px; font-size:0.8rem;">🔌 Connect Serial</button>
-                                <button id="btn-connect-hid" class="btn-touch" style="background:#8b5cf6; color:white; padding:8px; font-size:0.8rem;">🎮 Connect HID</button>
-                                <button id="btn-test-scanner" class="btn-touch active" style="background:#7c3aed; color:white; padding:8px; font-size:0.8rem;">🧪 Test Scan</button>
-                            </div>
-                            <button id="btn-disconnect-scanner" class="btn-touch" style="width:100%; background:#f1f5f9; color:#475569; padding:6px; font-size:0.8rem; border:1px solid #cbd5e1;">❌ Disconnect / Reset</button>
+                        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-bottom:10px;">
+                            <button id="btn-connect-bt" style="background:#2563eb; color:white; padding:9px 4px; border-radius:10px; border:none; font-size:0.7rem; font-weight:600;">🔵 BLE</button>
+                            <button id="btn-connect-serial" style="background:#7c3aed; color:white; padding:9px 4px; border-radius:10px; border:none; font-size:0.7rem; font-weight:600;">🔌 Serial</button>
+                            <button id="btn-connect-hid" style="background:#059669; color:white; padding:9px 4px; border-radius:10px; border:none; font-size:0.7rem; font-weight:600;">🎮 HID</button>
                         </div>
-
-                        <!-- LOG HASIL SCAN TEST -->
-                        <div style="background:#1e1b4b; color:#a5b4fc; padding:10px; border-radius:6px; font-family:monospace; font-size:0.75rem;">
-                            <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
-                                <span>📋 Log Test Scan (10 terakhir)</span>
-                                <button id="btn-clear-scanner-log" style="background:none; border:none; color:#fbbf24; cursor:pointer; font-size:0.7rem;">Clear</button>
-                            </div>
-                            <div id="scanner-test-log" style="max-height:120px; overflow-y:auto; background:#312e81; padding:6px; border-radius:4px; min-height:60px;">
-                                <div style="color:#6b7280;">Belum ada data scan. Tekan 'Test Scan' lalu scan barcode...</div>
-                            </div>
-                            <div style="margin-top:8px; display:flex; gap:6px;">
-                                <input type="text" id="input-manual-barcode" class="form-control" placeholder="Atau ketik manual barcode untuk simulasi" style="flex:1; padding:4px; font-size:0.75rem; background:#1e1b4b; color:white; border:1px solid #4338ca;">
-                                <button id="btn-simulate-scan" style="padding:4px 8px; background:#4f46e5; color:white; border:none; border-radius:4px; cursor:pointer;">Kirim</button>
-                            </div>
+                        <div style="display:flex; gap:8px; margin-bottom:10px;">
+                            <button id="btn-test-scanner" style="flex:1; background:#f59e0b; color:white; padding:9px; border-radius:10px; border:none; font-weight:600;">🧪 Test Scan</button>
+                            <button id="btn-clear-scanner-log" style="flex:1; background:var(--bg-secondary); color:var(--text-primary); padding:9px; border-radius:10px; border:1px solid var(--border-color);">🗑️ Clear</button>
                         </div>
-
-                        <div style="margin-top:10px; font-size:0.7rem; color:#6b7280; background:#f5f3ff; padding:6px; border-radius:4px;">
-                            <b>💡 Panduan:</b><br/>
-                            • <b>HID Keyboard:</b> Colok USB / Pair Bluetooth di setting HP, scanner akan ketik otomatis. Tidak perlu Pair di sini.<br/>
-                            • <b>Bluetooth BLE:</b> Klik Pair Bluetooth, pilih scanner (contoh: NETUM, Tera, Inateck).<br/>
-                            • <b>Serial:</b> Untuk scanner kabel USB-Serial / TTL. Butuh Chrome/Edge.<br/>
-                            • <b>USB HID:</b> Untuk scanner yang tidak keyboard wedge. Butuh Chrome/Edge.
-                        </div>
+                        <div id="scanner-test-log" style="background:#0f172a; color:#a5f3fc; padding:10px; border-radius:10px; max-height:120px; overflow-y:auto; font-family:monospace; font-size:0.7rem;">📝 Belum ada data scan...</div>
                     </div>
                 </div>
 
-                <!-- SETTING PRINTER -->
-                <div class="setting-card">
-                    <h4>Mode Printer</h4>
-                    <div class="btn-group" style="display:flex; gap:8px; margin-bottom:10px;">
-                        <button id="btn-printer-bt" class="btn-touch ${printerType === 'bluetooth' ? 'active' : ''}" style="flex:1; padding:8px; background:${printerType==='bluetooth'?'#f59e0b':'#e2e8f0'}; color:${printerType==='bluetooth'?'white':'#334155'};">🔵 Bluetooth</button>
-                        <button id="btn-printer-usb" class="btn-touch ${printerType === 'serial' ? 'active' : ''}" style="flex:1; padding:8px; background:${printerType==='serial'?'#f59e0b':'#e2e8f0'}; color:${printerType==='serial'?'white':'#334155'};">🔌 Serial/USB</button>
+                <div class="setting-card" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:16px; padding:16px;">
+                    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+                        <div style="width:36px; height:36px; background:linear-gradient(135deg, #f59e0b, #ef4444); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px;">🖨️</div>
+                        <div>
+                            <h4 style="color:var(--text-primary); margin:0; font-size:0.95rem; font-weight:700;">🖨️ Pengaturan Printer</h4>
+                            <small style="color:var(--text-secondary); font-size:0.72rem;">Thermal / Bluetooth / USB / Serial</small>
+                        </div>
                     </div>
-                    <button id="btn-connect-printer" class="btn-touch" style="width:100%; background:#f59e0b; color:white; padding:8px;">🔗 Hubungkan Printer</button>
-                </div>
-
-                <!-- SETTING TOKO -->
-                <div class="setting-card">
-                    <h4>Informasi Toko</h4>
-                    <input type="text" id="input-store-name" class="form-control" placeholder="Nama Toko" value="${localStorage.getItem('edc_store_name') || ''}" style="margin-bottom:6px; width:100%; padding:6px;">
-                    <button id="btn-save-store" class="btn-touch" style="width:100%; background:#10b981; color:white; padding:8px;">💾 Simpan Nama Toko</button>
+                    <div style="display:flex; gap:8px; margin-bottom:10px;">
+                        <button id="btn-printer-bt" class="btn-touch ${printerType === 'bluetooth' ? 'active' : ''}" style="flex:1; padding:10px; background:${printerType==='bluetooth'?'#f59e0b':'var(--bg-secondary)'}; color:${printerType==='bluetooth'?'white':'var(--text-primary)'}; border-radius:10px; border:1px solid var(--border-color); font-weight:600;">📱 Bluetooth</button>
+                        <button id="btn-printer-usb" class="btn-touch ${printerType === 'usb' ? 'active' : ''}" style="flex:1; padding:10px; background:${printerType==='usb'?'#f59e0b':'var(--bg-secondary)'}; color:${printerType==='usb'?'white':'var(--text-primary)'}; border-radius:10px; border:1px solid var(--border-color); font-weight:600;">🔌 USB</button>
+                        <button id="btn-printer-serial" class="btn-touch ${printerType === 'serial' ? 'active' : ''}" style="flex:1; padding:10px; background:${printerType==='serial'?'#f59e0b':'var(--bg-secondary)'}; color:${printerType==='serial'?'white':'var(--text-primary)'}; border-radius:10px; border:1px solid var(--border-color); font-weight:600;">🔗 Serial</button>
+                    </div>
+                    <button id="btn-connect-printer" style="width:100%; background:linear-gradient(135deg, #f59e0b, #d97706); color:white; padding:11px; border-radius:10px; border:none; font-weight:700;">🔗 Hubungkan Printer</button>
                 </div>
             </div>
         `;
@@ -288,19 +291,15 @@ const SettingModule = {
             if (window.app) window.app.loadModule('setting');
         });
         document.getElementById('btn-printer-usb')?.addEventListener('click', () => {
+            Printer.setType('usb');
+            if (window.app) window.app.loadModule('setting');
+        });
+        document.getElementById('btn-printer-serial')?.addEventListener('click', () => {
             Printer.setType('serial');
             if (window.app) window.app.loadModule('setting');
         });
         document.getElementById('btn-connect-printer')?.addEventListener('click', () => { Printer.connect(); });
-
-        document.getElementById('btn-save-store')?.addEventListener('click', () => {
-            const val = document.getElementById('input-store-name').value;
-            localStorage.setItem('edc_store_name', val);
-            const headerEl = document.getElementById('header-store-name');
-            if (headerEl) headerEl.textContent = `${val} (${JSON.parse(localStorage.getItem('edc_active_user') || '{}').name || 'Admin'})`;
-            alert('Nama Toko Diperbarui!');
-        });
-    },
+},
 
     initScannerDeviceHandlers() {
         // Load log history
@@ -538,7 +537,76 @@ const SettingModule = {
             input.value = '';
         });
 
+
+        // === THEME SETTINGS LOGIC - TAMBAHAN BARU (tidak mengganggu scanner/db) ===
+        const applyTheme = (theme) => {
+            const body = document.body;
+            const html = document.documentElement;
+            body.classList.remove('theme-dark','theme-light');
+            html.style.colorScheme = theme === 'light' ? 'light' : 'dark';
+            
+            if (theme === 'auto') {
+                const prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+                body.classList.add(prefersLight ? 'theme-light' : 'theme-dark');
+                body.setAttribute('data-theme','auto');
+                html.style.colorScheme = prefersLight ? 'light' : 'dark';
+            } else {
+                body.classList.add(theme === 'light' ? 'theme-light' : 'theme-dark');
+                body.setAttribute('data-theme', theme);
+            }
+            const metaTheme = document.querySelector('meta[name="theme-color"]');
+            if (metaTheme) {
+                const isLightNow = body.classList.contains('theme-light');
+                metaTheme.content = isLightNow ? '#ffffff' : '#0f172a';
+            }
+        };
+
+        const applyAccent = (color) => {
+            // FIX BUG TEMA TERANG: set di html DAN body dengan important
+            document.documentElement.style.setProperty('--accent-color', color, 'important');
+            document.documentElement.style.setProperty('--accent-hover', color, 'important');
+            document.body.style.setProperty('--accent-color', color, 'important');
+            document.body.style.setProperty('--accent-hover', color, 'important');
+            localStorage.setItem('edc_accent', color);
+        };
+
+        document.getElementById('btn-theme-dark')?.addEventListener('click', () => {
+            localStorage.setItem('edc_theme','dark');
+            applyTheme('dark');
+            if (window.app) window.app.loadModule('setting');
+        });
+        document.getElementById('btn-theme-light')?.addEventListener('click', () => {
+            localStorage.setItem('edc_theme','light');
+            applyTheme('light');
+            if (window.app) window.app.loadModule('setting');
+        });
+        document.getElementById('btn-theme-auto')?.addEventListener('click', () => {
+            localStorage.setItem('edc_theme','auto');
+            applyTheme('auto');
+            if (window.app) window.app.loadModule('setting');
+        });
+
+        document.querySelectorAll('.btn-accent').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const color = btn.dataset.color;
+                applyAccent(color);
+                document.querySelectorAll('.btn-accent').forEach(b => {
+                    b.style.border = '3px solid transparent';
+                    b.style.outline = '2px solid transparent';
+                });
+                btn.style.border = '3px solid white';
+                btn.style.outline = `2px solid ${color}`;
+            });
+        });
+
+        window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+            if ((localStorage.getItem('edc_theme') || 'dark') === 'auto') {
+                applyTheme('auto');
+            }
+        });
+
         document.getElementById('input-manual-barcode')?.addEventListener('keydown', (e) => {
+
             if (e.key === 'Enter') {
                 e.preventDefault();
                 document.getElementById('btn-simulate-scan').click();

@@ -868,6 +868,41 @@ const TransaksiModule = {
         window.app.loadModule('transaksi');
     },
 
+    // FIX: Tambah method yang hilang bikin tombol Apply tidak berfungsi
+    applyMemberPromo(promoId) {
+        try {
+            if (!this.memberPromoData || !this.memberPromoData.promos) {
+                return alert('Data promo member tidak tersedia');
+            }
+            const promo = this.memberPromoData.promos.find(p => String(p.id) === String(promoId));
+            if (!promo) return alert('Promo tidak ditemukan: ' + promoId);
+            if (!promo.canApply) return alert('Promo tidak bisa di-apply saat ini');
+            const result = MemberPromoModule.applyPromoToCart(promo, this);
+            if (result && result.success) {
+                window.app.loadModule('transaksi');
+            } else {
+                alert(result?.message || 'Gagal apply promo member');
+            }
+        } catch(e) {
+            console.error('applyMemberPromo error', e);
+            alert('Error: ' + e.message);
+        }
+    },
+
+    removeMemberPromo(promoId) {
+        try {
+            const promo = this.memberPromoData?.promos?.find(p => String(p.id) === String(promoId));
+            if (promo && promo.discountAmount) {
+                this.memberDiscount = Math.max(0, (this.memberDiscount||0) - Number(promo.discountAmount||0));
+            }
+            MemberPromoModule.removePromoFromCart(promoId, this);
+            window.app.loadModule('transaksi');
+        } catch(e) {
+            console.error('removeMemberPromo error', e);
+            window.app.loadModule('transaksi');
+        }
+    },
+
     updateQty(identifier, delta) {
         const item = this.cart.find(i => String(i.prodId) === String(identifier) || i.name === identifier);
         if (!item) return;
@@ -885,10 +920,97 @@ const TransaksiModule = {
         if (item.qty <= 0) {
             this.cart = this.cart.filter(i => (i.prodId ? String(i.prodId) !== String(identifier) : i.name !== identifier));
         }
-        // auto fokus tetap ke cart setelah update qty
-        window._transaksiAutoFocusCart = true;
-        window._transaksiAutoFocusProdId = identifier;
-        window.app.loadModule('transaksi');
+
+        // FIX: Update UI tanpa reload modul - tidak berkedip
+        try {
+            const result = this.calculateTotalWithPromos();
+            let memberDiscount = this.memberDiscount || 0;
+            
+            // Jika ada promo tier yang autoApply, hitung ulang proporsional terhadap subtotal baru
+            // biar diskon member tidak stuck di nilai lama saat qty berubah
+            if (this.memberPromoData && this.memberPromoData.promos && window._memberPromoState) {
+                const tierPromo = this.memberPromoData.promos.find(p => p.rule === 'TIER_DISCOUNT' && window._memberPromoState.appliedIds.includes(p.id));
+                if (tierPromo && tierPromo.config && tierPromo.config.percent) {
+                    const newCartSubtotal = this.cart.reduce((a,i)=> a + Number(i.price||0)*Number(i.qty||1), 0);
+                    const newDisc = Math.round(newCartSubtotal * Number(tierPromo.config.percent) / 100);
+                    // ganti discount tier lama dengan baru di memberDiscount
+                    const oldDisc = Number(tierPromo.discountAmount||0);
+                    memberDiscount = Math.max(0, memberDiscount - oldDisc + newDisc);
+                    this.memberDiscount = memberDiscount;
+                    tierPromo.discountAmount = newDisc;
+                    tierPromo.discount = newDisc;
+                }
+            }
+
+            let total = Math.max(0, result.totalBeforeTax - memberDiscount + result.taxTotal);
+
+            // 1. Update / hapus item di DOM
+            const cartList = document.querySelector('.cart-list');
+            const itemEl = document.querySelector(`[data-cart-prod-id="${CSS.escape ? CSS.escape(identifier) : identifier}"]`);
+            if (item && item.qty > 0 && itemEl) {
+                // update teks qty dan line total
+                const bEl = itemEl.querySelector('b');
+                if (bEl) bEl.nextSibling && (bEl.parentNode.innerHTML = bEl.parentNode.innerHTML.replace(/x\d+/, `x${item.qty}`));
+                // cara aman: rebuild inner untuk item tersebut saja
+                const lineTotal = item.price * item.qty;
+                const lineTax = item.taxEnabled ? Math.round(lineTotal * (Number(item.taxRate||11)/100)) : 0;
+                const qtySpan = itemEl.querySelector('div > div');
+                if (qtySpan) {
+                    // update Rp lineTotal
+                    const priceDiv = itemEl.querySelector('div[style*="text-align:right"] div');
+                    if (priceDiv) priceDiv.textContent = `Rp ${lineTotal.toLocaleString()}`;
+                }
+                // update x qty di kiri
+                const leftDiv = itemEl.querySelector('div:first-child');
+                if (leftDiv) {
+                    leftDiv.innerHTML = `<b>${item.name}</b> x${item.qty} ${item.taxEnabled ? `<span style="font-size:0.6rem; background:#ffc107; padding:1px 4px; border-radius:3px;">Pajak ${item.taxRate}%</span>` : ''}<br><small style="color:var(--text-secondary);">@ Rp ${Number(item.price).toLocaleString()} ${item.taxEnabled ? `+ Pajak Rp ${lineTax.toLocaleString()}` : ''}</small>`;
+                }
+                const rightDiv = itemEl.querySelector('div[style*="text-align:right"]');
+                if (rightDiv) {
+                    rightDiv.innerHTML = `<div>Rp ${lineTotal.toLocaleString()}</div>${item.taxEnabled ? `<div style="font-size:0.65rem; color:#d97706;">+Rp ${lineTax.toLocaleString()} pajak</div>` : ''}<div style="margin-top:2px;"><button onclick="TransaksiModule.updateQty('${item.prodId || item.name}', -1)" style="padding:1px 6px; font-size:0.75rem;">-</button><button onclick="TransaksiModule.updateQty('${item.prodId || item.name}', 1)" style="padding:1px 6px; font-size:0.75rem;">+</button></div>`;
+                }
+            } else if (!item || item.qty <= 0) {
+                if (itemEl) itemEl.remove();
+                if (this.cart.length === 0 && cartList) {
+                    cartList.innerHTML = '<p style="font-size:0.8rem; color:var(--text-secondary); text-align:center;">Keranjang Kosong</p>';
+                }
+            }
+
+            // 2. Update summary tanpa reload
+            const summary = document.querySelector('.cart-summary');
+            if (summary) {
+                // Subtotal
+                const subtotalEl = summary.querySelector('div[style*="justify-content:space-between"] span:last-child');
+                // Lebih aman: update berdasarkan urutan
+                const rows = summary.querySelectorAll('div[style*="justify-content:space-between"]');
+                // rows[0] Subtotal
+                if (rows[0]) {
+                    const valSpan = rows[0].querySelector('span:last-child');
+                    if (valSpan) valSpan.textContent = `Rp ${result.subtotal.toLocaleString()}`;
+                }
+                // Update diskon, member, pajak, total via cart-total
+                const totalEl = summary.querySelector('.cart-total span:last-child');
+                if (totalEl) totalEl.textContent = `Rp ${total.toLocaleString()}`;
+
+                // Untuk diskon promo & member & pajak, re-render bagian tengah saja biar akurat tanpa reload full
+                const middleContainer = summary.querySelector('div[style*="border-top"]');
+                if (middleContainer) {
+                    let html = `<div style="display:flex; justify-content:space-between;"><span>Subtotal</span><span>Rp ${result.subtotal.toLocaleString()}</span></div>`;
+                    if (result.discount > 0) html += `<div style="display:flex; justify-content:space-between; color:var(--success-color);"><span>Diskon Promo Toko</span><span>-Rp ${result.discount.toLocaleString()}</span></div>`;
+                    if (memberDiscount > 0) html += `<div style="display:flex; justify-content:space-between; color:#0ea5e9;"><span>Diskon Member</span><span>-Rp ${memberDiscount.toLocaleString()}</span></div>`;
+                    if (result.taxTotal > 0) html += `<div style="display:flex; justify-content:space-between; color:#d97706;"><span>Pajak (${result.taxDetails.map(t=>t.name+':'+t.rate+'%').join(', ')})</span><span>+Rp ${result.taxTotal.toLocaleString()}</span></div>`;
+                    if (result.taxTotal > 0) html += `<div style="display:flex; justify-content:space-between; font-size:0.7rem; opacity:0.8;"><span>DPP</span><span>Rp ${(result.subtotal - result.discount).toLocaleString()}</span></div>`;
+                    middleContainer.innerHTML = html;
+                }
+            }
+
+            // 3. Update badge jumlah item jika ada
+            // Tidak reload modul = tidak berkedip
+            return;
+        } catch(e) {
+            console.warn('updateQty no-reload fail, fallback reload', e);
+            window.app.loadModule('transaksi');
+        }
     },
 
     toggleScanner() {
