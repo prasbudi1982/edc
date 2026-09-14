@@ -37,9 +37,7 @@
         .nav-btn { min-width: 60px; }
     </style>
 
-
-    
-    <!-- PATCH TEMA: Apply tema lebih awal biar tidak kedip - tanpa ubah yang lama -->
+    <!-- PATCH TEMA: Apply tema lebih awal -->
     <script>
     (function(){
         try {
@@ -48,7 +46,6 @@
             const root = document.documentElement;
             root.style.setProperty('--accent-color', accent);
             root.style.setProperty('--accent-hover', accent);
-            // set class secepatnya
             document.addEventListener('DOMContentLoaded', function(){
                 const body = document.body;
                 body.classList.remove('theme-dark','theme-light');
@@ -75,7 +72,6 @@
     })();
     </script>
 
-    <!-- PATCH V2: Anti Pull Refresh - tanpa position:fixed, fix nav hilang -->
     <style>
         html {
             overscroll-behavior: none;
@@ -109,7 +105,6 @@
             z-index: 20;
         }
     </style>
-
 </head>
 <body class="theme-dark">
 
@@ -129,7 +124,6 @@
                 <i data-lucide="download"></i> PASANG SEKARANG
             </button>
 
-            <!-- Panduan Tambahan Khusus Browser iOS / Safari -->
             <div id="ios-instructions" style="display:none; margin-top:20px; padding:12px; background:#0f172a; border-radius:8px; text-align:left; border:1px solid #334155;">
                 <span style="color:#f59e0b; font-weight:bold; font-size:0.8rem; display:block; margin-bottom:4px;">Petunjuk iOS (Safari):</span>
                 <ol style="color:#cbd5e1; font-size:0.75rem; margin:0; padding-left:18px; line-height:1.4;">
@@ -191,7 +185,7 @@
             <div class="loader">Memuat modul...</div>
         </main>
 
-        <!-- Bottom Touch Navigation -->
+        <!-- Bottom Touch Navigation (Termasuk Tab Karyawan) -->
         <nav class="edc-nav">
             <button class="nav-btn active" data-module="transaksi">
                 <i data-lucide="shopping-bag"></i>
@@ -209,6 +203,12 @@
                 <i data-lucide="users"></i>
                 <span>Member</span>
             </button>
+
+            <button class="nav-btn" data-module="karyawan">
+                <i data-lucide="user-check"></i>
+                <span>Karyawan</span>
+            </button>
+
             <button class="nav-btn" data-module="laporan">
                 <i data-lucide="file-text"></i>
                 <span>Laporan</span>
@@ -220,15 +220,12 @@
         </nav>
     </div>
 
-        <script type="module">
-    // PATCH TEMA MODULE - load tanpa ganggu main.js
-    import ThemeManager from './js/modules/theme.js';
-    // jika theme.js belum ada, fallback sudah di-handle di atas
-    try { ThemeManager.init(); } catch(e){}
+    <script type="module">
+        import ThemeManager from './js/modules/theme.js';
+        try { ThemeManager.init(); } catch(e){}
     </script>
     <script src="js/main.js" type="module"></script>
 
-    <!-- PATCH V2 JS: cegah pull-refresh tapi jangan blok nav -->
     <script>
     (function() {
         let startY = 0;
@@ -238,12 +235,10 @@
 
         document.addEventListener('touchmove', e => {
             const target = e.target;
-            // biarkan nav tetap bisa di-swipe horizontal
             if (target.closest('.edc-nav')) return;
             
             const scrollable = target.closest('.edc-content, .cart-list');
             if (!scrollable) {
-                // cegah body ketarik
                 if (e.cancelable) e.preventDefault();
                 return;
             }
