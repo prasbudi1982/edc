@@ -86,6 +86,124 @@ const LaporanModule = {
         return t.operator || t.admin || t.kasir || t.cashier || t.userName || 'Admin';
     },
 
+    // HELPER TERHUBUNG KE MODUL KARYAWAN: HITUNG TOTAL BEBAN GAJI & BONUS KARYAWAN
+    getKaryawanExpenseSummary() {
+        const operators = JSON.parse(localStorage.getItem('edc_operators') || '[]');
+        const attendances = JSON.parse(localStorage.getItem('edc_attendances') || '[]');
+        const salaries = JSON.parse(localStorage.getItem('edc_salaries') || '[]');
+        const now = new Date();
+
+        let totalSalaryExpense = 0;
+        let details = [];
+
+        operators.forEach(op => {
+            const opName = op.name || 'Operator';
+            const salSetting = salaries.find(s => String(s.operatorId) === String(op.id)) || {
+                dailyRate: 50000,
+                weeklyRate: 300000,
+                monthlyRate: 1250000,
+                bonusPercent: 0
+            };
+
+            // Process absensi
+            const opAttendances = attendances.filter(att => String(att.operatorId) === String(op.id));
+            const filteredLogs = opAttendances.map(att => {
+                const loginDate = new Date(att.loginTime);
+                if (isNaN(loginDate.getTime())) return null;
+
+                let logoutDate = att.logoutTime ? new Date(att.logoutTime) : null;
+                if (!logoutDate) {
+                    const opTrxs = this.transactions.filter(t => {
+                        const tOpId = t.operator?.id || t.operatorId;
+                        const tOpName = t.operator?.name || t.operator;
+                        const matchesOp = String(tOpId) === String(op.id) || tOpName === opName;
+                        const tDate = new Date(t.createdAt || t.timestamp);
+                        return matchesOp && tDate.toDateString() === loginDate.toDateString() && tDate >= loginDate;
+                    }).sort((a,b) => new Date(b.createdAt||b.timestamp) - new Date(a.createdAt||a.timestamp));
+
+                    if (opTrxs.length > 0) {
+                        logoutDate = new Date(opTrxs[0].createdAt || opTrxs[0].timestamp);
+                    } else {
+                        logoutDate = new Date();
+                    }
+                }
+
+                const diffMs = Math.max(0, logoutDate - loginDate);
+                const durationMinutes = Math.floor(diffMs / (1000 * 60));
+                return { date: loginDate, durationMinutes };
+            }).filter(item => {
+                if (!item) return false;
+                const d = item.date;
+                if (this.filterType === 'today') {
+                    return d.toDateString() === now.toDateString();
+                } else if (this.filterType === 'week') {
+                    const currentDay = now.getDay();
+                    const diffToMonday = (currentDay === 0 ? -6 : 1 - currentDay);
+                    const startOfWeek = new Date(now);
+                    startOfWeek.setDate(now.getDate() + diffToMonday);
+                    startOfWeek.setHours(0, 0, 0, 0);
+                    const endOfWeek = new Date(startOfWeek);
+                    endOfWeek.setDate(startOfWeek.getDate() + 6);
+                    endOfWeek.setHours(23, 59, 59, 999);
+                    return d >= startOfWeek && d <= endOfWeek;
+                } else if (this.filterType === 'month') {
+                    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+                } else if (this.filterType === 'year') {
+                    return d.getFullYear() === now.getFullYear();
+                } else if (this.filterType === 'custom') {
+                    if (!this.customStartDate || !this.customEndDate) return true;
+                    const start = new Date(this.customStartDate);
+                    start.setHours(0, 0, 0, 0);
+                    const end = new Date(this.customEndDate);
+                    end.setHours(23, 59, 59, 999);
+                    return d >= start && d <= end;
+                }
+                return true;
+            });
+
+            const totalMinutes = filteredLogs.reduce((sum, log) => sum + log.durationMinutes, 0);
+
+            // Rate calculation per minute
+            let baseRate = salSetting.dailyRate;
+            let standardMinutes = 480; 
+            if (this.filterType === 'week') {
+                baseRate = salSetting.weeklyRate;
+                standardMinutes = 480 * 6;
+            } else if (this.filterType === 'month' || this.filterType === 'year') {
+                baseRate = salSetting.monthlyRate;
+                standardMinutes = 480 * 25;
+            }
+
+            const ratePerMinute = standardMinutes > 0 ? (baseRate / standardMinutes) : 0;
+            const baseSalaryCalculated = Math.round(totalMinutes * ratePerMinute);
+
+            // Filter transaksi yang dilayani operator dalam periode laporan
+            const filteredTrxs = this.getFilteredTransactions().filter(t => {
+                const tOpId = t.operator?.id || t.operatorId;
+                const tOpName = t.operator?.name || t.operator;
+                return String(tOpId) === String(op.id) || tOpName === opName;
+            });
+
+            const totalProfit = filteredTrxs.reduce((sum, t) => sum + (Number(t.computedLaba ?? 0)), 0);
+            const bonusPercent = Number(salSetting.bonusPercent || 0);
+            const bonusCalculated = Math.round((totalProfit * bonusPercent) / 100);
+
+            const totalSalary = baseSalaryCalculated + bonusCalculated;
+            if (totalSalary > 0 || totalMinutes > 0) {
+                totalSalaryExpense += totalSalary;
+                details.push({
+                    operatorName: opName,
+                    totalMinutes,
+                    baseSalaryCalculated,
+                    bonusCalculated,
+                    totalSalary
+                });
+            }
+        });
+
+        return { totalSalaryExpense, details };
+    },
+
     async render() {
         try {
             this.transactions = await DB.getTransactions() || [];
@@ -132,7 +250,6 @@ const LaporanModule = {
         const expiredProductsForAset = this.products.filter(p=> getExpInfoLaporan(p).isExpired || p.status==='expired' || p.kondisi==='expired');
         const rusakProductsForAset = this.products.filter(p=> p.kondisi==='rusak' || p.status==='rusak');
 
-                // === FIX: Load disposal logs DULU sebelum hitung modal (bug sebelumnya disposalLogs belum ada) ===
         let disposalLogs = [];
         let idbLogs = [];
         let lsLogs = [];
@@ -170,27 +287,19 @@ const LaporanModule = {
         },0);
         const totalKerugianAset = totalAsetExpiredModal + totalAsetRusakModal;
 
-        // Tambahan: modal dari produk yang rusak sebagian (tidak masuk rusakProductsForAset karena stok >0)
-        // Sudah dihitung di totalLossRusakLog (costLoss), jadi totalKerugianLog sudah mencakupnya
-
-        // disposalLogs sudah loaded di atas
-        
         const disposalExpired = disposalLogs.filter(l=>l.type==='expired');
         const disposalRusak = disposalLogs.filter(l=>l.type==='rusak');
         const disposalOpname = disposalLogs.filter(l=>l.type==='opname');
         const totalLossExpiredLog = disposalExpired.reduce((s,l)=>s+(Number(l.costLoss)||0),0);
         const totalLossRusakLog = disposalRusak.reduce((s,l)=>s+(Number(l.costLoss)||0),0);
-        // Opname: hitung kerugian dari selisih negatif - costLoss sudah disimpan di produk_final
+
         const totalLossOpname = disposalOpname.reduce((s,l)=>{
             return s + (Number(l.costLoss||0));
         },0);
-        const totalLossOpnameCount = disposalOpname.length;
         const totalKerugianLog = totalLossExpiredLog + totalLossRusakLog + totalLossOpname;
         const totalOpnameSelisih = disposalOpname.reduce((s,l)=>s+Number(l.diff||0),0);
 
-
-
-        // === FITUR: PERINGATAN STOK MENIPIS - PER PRODUK (sinkron tema) ===
+        // === FITUR: PERINGATAN STOK MENIPIS - PER PRODUK ===
         const lowStockProducts = this.products.filter(p => {
             const min = Number(p.minStock ?? p.min_stock ?? 5);
             const stok = Number(p.stock ?? p.stok ?? 0);
@@ -212,17 +321,8 @@ const LaporanModule = {
                             <span style="font-size:0.7rem; color:var(--text-secondary, #94a3b8);">▼ Detail</span>
                         </div>
                     </div>
-                    <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; display:none;" onclick="document.getElementById('low-stock-detail').style.display = document.getElementById('low-stock-detail').style.display==='none'?'block':'none'">
-                        <h4 style="color:#dc2626; margin:0; display:flex; align-items:center; gap:6px;">
-                            ⚠️ Peringatan Stok Menipis
-                            <span style="background:#ef4444; color:#fff; font-size:0.7rem; padding:2px 7px; border-radius:10px;">${lowStockCount} produk</span>
-                            ${criticalCount > 0 ? `<span style="background:#991b1b; color:#fff; font-size:0.65rem; padding:2px 6px; border-radius:10px;">${criticalCount} habis</span>` : ''}
-                        </h4>
-                        <span style="font-size:0.7rem; color:#dc2626;">▼ Klik untuk detail</span>
-                    </div>
                     <div id="low-stock-detail" style="display:none; margin-top:10px; max-height:200px; overflow-y:auto;">
                         ${lowStockProducts.map(p => {
-                            const minPerProd = Number(p.minStock ?? p.min_stock ?? 5);
                             const stok = Number(p.stock ?? p.stok ?? 0);
                             const isHabis = stok === 0;
                             const isKritis = stok <= 2;
@@ -245,36 +345,14 @@ const LaporanModule = {
                     </div>
                 </div>` : '';
 
-        // === FITUR BARU: PERINGATAN PRODUK EXPIRED (minimal 1 bulan sebelum expired) - FIXED ===
+        // === FITUR BARU: PERINGATAN PRODUK EXPIRED ===
         const getExpiredInfo = (p) => {
-            // Cek semua kemungkinan field
             const expStr = p.expired || p.expired_date || p.expDate || p.tgl_expired || p.expiry || p.tglExpired || p.exp || p.expiredDate || p.tanggal_expired;
             if (!expStr) return null;
-            let d;
-            // Coba parse langsung
-            d = new Date(expStr);
-            if (isNaN(d.getTime())) {
-                // Coba timestamp number
-                if (!isNaN(Number(expStr))) {
-                    d = new Date(Number(expStr));
-                }
-            }
-            if (isNaN(d.getTime())) {
-                // Coba format dd-mm-yyyy atau dd/mm/yyyy
-                const str = String(expStr).trim();
-                const m = str.match(/^(\d{1,2})[-/\s](\d{1,2})[-/\s](\d{2,4})$/);
-                if (m) {
-                    const day = parseInt(m[1],10);
-                    const month = parseInt(m[2],10)-1;
-                    let year = parseInt(m[3],10);
-                    if (year < 100) year += 2000;
-                    d = new Date(year, month, day);
-                }
-            }
+            let d = new Date(expStr);
+            if (isNaN(d.getTime()) && !isNaN(Number(expStr))) d = new Date(Number(expStr));
             if (isNaN(d.getTime())) return null;
-            const now = new Date();
-            now.setHours(0,0,0,0);
-            d.setHours(0,0,0,0);
+            const now = new Date(); now.setHours(0,0,0,0); d.setHours(0,0,0,0);
             const diffDays = Math.floor((d - now) / (1000*60*60*24));
             return { date: d, diffDays, expStr };
         };
@@ -283,9 +361,6 @@ const LaporanModule = {
         const expiredProducts = this.products.filter(p => {
             const info = getExpiredInfo(p);
             if (!info) return false;
-            const stok = Number(p.stock ?? p.stok ?? 0);
-            // Tampilkan meski stok 0 untuk warning expired (penting)
-            // Tapi untuk promo, nanti stok 0 akan di-skip
             return info.diffDays <= 30;
         }).map(p => {
             const info = getExpiredInfo(p);
@@ -296,8 +371,6 @@ const LaporanModule = {
         const alreadyExpiredCount = expiredProducts.filter(e => e.diffDays < 0).length;
         const near7DaysCount = expiredProducts.filter(e => e.diffDays >=0 && e.diffDays <=7).length;
         const near30DaysCount = expiredProducts.filter(e => e.diffDays >7 && e.diffDays <=30).length;
-
-        console.log(`⏰ [Laporan] Total produk: ${this.products.length}, dengan tgl expired: ${allWithExpiry.length}, expired/H-30: ${expiredCount}`);
 
         const expiredHTML = expiredCount > 0 ? `
                 <div class="setting-card" style="margin-top:8px; background:var(--bg-card, #1e293b); border:1px solid var(--border-color, #334155); border-left:5px solid #f59e0b; border-radius:8px;">
@@ -315,24 +388,16 @@ const LaporanModule = {
                         ${expiredProducts.map(({product: p, date, diffDays}) => {
                             const stok = Number(p.stock ?? p.stok ?? 0);
                             const cost = Number(p.costPrice ?? p.cogs ?? p.buyPrice ?? p.hargaBeli ?? p.modal ?? 0) || 0;
-                            const price = Number(p.price ?? p.hargaJual ?? 0) || 0;
                             const totalModal = stok * cost;
-                            let status = '';
-                            let bg = '';
-                            let color = '';
-                            let icon = '';
+                            let status = '', bg = '', color = '', icon = '';
                             if (diffDays < 0) {
-                                status = `EXPIRED ${Math.abs(diffDays)} hari lalu`;
-                                bg = 'rgba(239,68,68,0.12)'; color = '#ef4444'; icon = '🚨';
+                                status = `EXPIRED ${Math.abs(diffDays)} hari lalu`; bg = 'rgba(239,68,68,0.12)'; color = '#ef4444'; icon = '🚨';
                             } else if (diffDays === 0) {
-                                status = 'EXPIRED HARI INI';
-                                bg = 'rgba(239,68,68,0.12)'; color = '#ef4444'; icon = '🚨';
+                                status = 'EXPIRED HARI INI'; bg = 'rgba(239,68,68,0.12)'; color = '#ef4444'; icon = '🚨';
                             } else if (diffDays <= 7) {
-                                status = `H-${diffDays} hari`;
-                                bg = 'rgba(245,158,11,0.15)'; color = '#f59e0b'; icon = '⚠️';
+                                status = `H-${diffDays} hari`; bg = 'rgba(245,158,11,0.15)'; color = '#f59e0b'; icon = '⚠️';
                             } else {
-                                status = `H-${diffDays} hari`;
-                                bg = 'rgba(234,179,8,0.12)'; color = 'var(--text-color)'; icon = '⏰';
+                                status = `H-${diffDays} hari`; bg = 'rgba(234,179,8,0.12)'; color = 'var(--text-color)'; icon = '⏰';
                             }
                             const expDateStr = date.toLocaleDateString('id-ID', {day:'2-digit', month:'short', year:'numeric'});
                             return `
@@ -363,13 +428,12 @@ const LaporanModule = {
                     </div>
                 </div>`;
 
-        
         const filteredData = this.getFilteredTransactions();
         const totalOmset = filteredData.reduce((sum, t) => sum + (Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0)), 0);
         const totalTrx = filteredData.length;
 
         let totalHPP = 0;
-        let totalLabaBersih = 0;
+        let totalLabaKotor = 0;
 
         const enrichedTransactions = filteredData.map(t => {
             let trxHPP = 0;
@@ -394,7 +458,7 @@ const LaporanModule = {
             const trxLaba = trxOmset - trxHPP;
 
             totalHPP += trxHPP;
-            totalLabaBersih += trxLaba;
+            totalLabaKotor += trxLaba;
 
             return {
                 ...t,
@@ -403,6 +467,13 @@ const LaporanModule = {
                 computedLaba: trxLaba
             };
         });
+
+        // === KARYAWAN EXPENSE CALCULATION & AKUMULASI LABA BERSIH ===
+        const karyawanExpense = this.getKaryawanExpenseSummary();
+        const totalBebanKaryawan = karyawanExpense.totalSalaryExpense;
+        
+        // Akumulasi laba bersih (Laba Kotor dikurangi Beban Karyawan)
+        const totalLabaBersih = totalLabaKotor - totalBebanKaryawan;
 
         const profitMargin = totalOmset > 0 ? ((totalLabaBersih / totalOmset) * 100).toFixed(1) : '0.0';
         const avgBasketSize = totalTrx > 0 ? Math.round(totalOmset / totalTrx) : 0;
@@ -478,7 +549,6 @@ const LaporanModule = {
                 ${lowStockHTML}
                 ${expiredHTML}
                 ${(() => {
-                    // FIX: hitung rusak/expired dari status + log (biar sinkron dengan Produk)
                     const expiredProdIdsFromLog = new Set(disposalExpired.map(l=>String(l.prodId)));
                     const rusakProdIdsFromLog = new Set(disposalRusak.map(l=>String(l.prodId)));
                     const expiredFromLogCount = [...expiredProdIdsFromLog].filter(id=>!expiredProductsForAset.some(p=>String(p.id)===id)).length;
@@ -520,34 +590,8 @@ const LaporanModule = {
                             <span style="color:var(--text-secondary); font-size:0.7rem;">Total Kerugian (Expired+Rusak+Opname)</span>
                             <b style="color:#ef4444; font-size:0.8rem;">Rp ${(totalKerugianAset + totalKerugianLog).toLocaleString('id-ID')}</b>
                         </div>
-                        <div style="font-size:0.55rem; color:var(--text-secondary); margin-top:4px; opacity:0.7;">*Aset aktif tidak termasuk expired/rusak. Opname negatif = kehilangan stok.</div>
                     </div>
-                    ${disposalLogs.length>0 ? `
-                    <div style="margin-top:8px;">
-                        <div style="font-size:0.7rem; font-weight:bold; margin-bottom:4px; cursor:pointer;" onclick="document.getElementById('disposal-detail-laporan').style.display = document.getElementById('disposal-detail-laporan').style.display==='none'?'block':'none'">📜 Log Buang/Rusak/Opname (${disposalLogs.length}) ▼</div>
-                        <div id="disposal-detail-laporan" style="display:none; max-height:200px; overflow-y:auto; font-size:0.7rem; background:var(--bg-card); border:1px solid var(--border-color); border-radius:6px; padding:6px; margin-top:4px;">
-                            ${disposalLogs.slice(-20).reverse().map(l=>{
-                                const isOpname = l.type==='opname';
-                                const diffStr = isOpname ? `${Number(l.diff)>0?'+':''}${l.diff} pcs ( ${l.before} → ${l.after} )` : `${l.qty||''} pcs`;
-                                const color = l.type==='expired'?'#ef4444':l.type==='rusak'?'var(--text-secondary)':'#f59e0b';
-                                return `
-                                <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed var(--border-color); gap:6px;">
-                                    <div style="flex:1;">
-                                        <div style="font-weight:600; color:var(--text-color);">${new Date(l.date).toLocaleDateString('id-ID')} - ${l.prodName||l.prodId}</div>
-                                        <div style="font-size:0.65rem; color:var(--text-secondary);">${l.type.toUpperCase()} • ${diffStr} • ${l.reason||''}</div>
-                                    </div>
-                                    <div style="text-align:right;">
-                                        <div style="font-size:0.65rem; color:${color}; font-weight:bold;">${l.type}</div>
-                                        ${l.costLoss ? `<div style="font-size:0.6rem; color:#ef4444;">Rp ${Number(l.costLoss).toLocaleString('id-ID')}</div>` : ''}
-                                    </div>
-                                </div>
-                            `}).join('')}
-                            ${disposalLogs.length>15 ? `<div style="text-align:center; font-size:0.6rem; color:var(--text-secondary); margin-top:4px;">Menampilkan 20 terbaru dari ${disposalLogs.length} log</div>` : ''}
-                        </div>
-                    </div>
-                    ` : ''}
-                </div>
-                `;
+                </div>`;
                 })()}
 
                 <div class="stat-grid" style="margin-top:10px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
@@ -557,11 +601,11 @@ const LaporanModule = {
                         <small style="font-size:0.65rem; color:var(--text-secondary);">HPP: Rp ${totalHPP.toLocaleString('id-ID')}</small>
                     </div>
                     <div class="stat-card" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:10px;">
-                        <h4 style="font-size:0.65rem; color:var(--text-secondary); margin:0 0 4px 0;">LABA BERSIH</h4>
+                        <h4 style="font-size:0.65rem; color:var(--text-secondary); margin:0 0 4px 0;">LABA BERSIH (NET)</h4>
                         <div class="value" style="color: ${totalLabaBersih >= 0 ? '#0284c7' : '#ef4444'}; font-weight:bold; font-size:0.95rem;">
                             Rp ${totalLabaBersih.toLocaleString('id-ID')}
                         </div>
-                        <small style="font-size:0.65rem; color:var(--text-secondary);">Margin: ${profitMargin}%</small>
+                        <small style="font-size:0.65rem; color:var(--text-secondary);">Kotor: Rp ${totalLabaKotor.toLocaleString('id-ID')} | Margin: ${profitMargin}%</small>
                     </div>
                     <div class="stat-card" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:10px;">
                         <h4 style="font-size:0.65rem; color:var(--text-secondary); margin:0 0 4px 0;">TOTAL TRANSAKSI</h4>
@@ -578,7 +622,56 @@ const LaporanModule = {
                     </div>
                 </div>
 
-                <!-- Kontainer Chart Canvas - TEMA SYNC -->
+                <!-- KOMPONEN REKAP GAJI KARYAWAN TERHUBUNG OTOMATIS -->
+                <div class="setting-card" style="margin-top:10px; background:var(--bg-card); border:1px solid var(--border-color); border-left:5px solid #2563eb; border-radius:10px; padding:10px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+                        <div>
+                            <h4 style="margin:0; font-size:0.85rem; color:var(--text-color); display:flex; align-items:center; gap:6px;">
+                                👥 Rekap Beban Gaji & Bonus Karyawan
+                            </h4>
+                            <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px;">
+                                Total Beban Periode Ini: <b style="color:#ef4444;">Rp ${totalBebanKaryawan.toLocaleString('id-ID')}</b>
+                            </div>
+                        </div>
+                        <button class="btn-touch" style="font-size:0.7rem; padding:4px 8px; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary);" onclick="const el=document.getElementById('karyawan-expense-detail'); el.style.display = el.style.display==='none'?'block':'none';">
+                            ▼ Detail Karyawan
+                        </button>
+                    </div>
+
+                    <div id="karyawan-expense-detail" style="display:none; margin-top:10px; border-top:1px dashed var(--border-color); padding-top:8px;">
+                        ${karyawanExpense.details.length === 0 ? `
+                            <p style="font-size:0.75rem; color:var(--text-secondary); margin:0; text-align:center; padding:6px;">Tidak ada beban gaji tercatat untuk periode ini.</p>
+                        ` : `
+                            <table style="width:100%; font-size:0.75rem; border-collapse:collapse; color:var(--text-color);">
+                                <thead>
+                                    <tr style="border-bottom:1px solid var(--border-color); text-align:left; color:var(--text-secondary);">
+                                        <th style="padding:4px;">Nama Karyawan</th>
+                                        <th style="padding:4px;">Durasi</th>
+                                        <th style="padding:4px;">Gaji Pokok</th>
+                                        <th style="padding:4px;">Bonus</th>
+                                        <th style="padding:4px; text-align:right;">Total Gaji</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${karyawanExpense.details.map(d => `
+                                        <tr style="border-bottom:1px dashed var(--border-color);">
+                                            <td style="padding:6px 4px; font-weight:bold;">${d.operatorName}</td>
+                                            <td style="padding:6px 4px;">${d.totalMinutes} Mnt</td>
+                                            <td style="padding:6px 4px;">Rp ${d.baseSalaryCalculated.toLocaleString('id-ID')}</td>
+                                            <td style="padding:6px 4px; color:#22c55e;">+Rp ${d.bonusCalculated.toLocaleString('id-ID')}</td>
+                                            <td style="padding:6px 4px; text-align:right; font-weight:bold; color:#ef4444;">Rp ${d.totalSalary.toLocaleString('id-ID')}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        `}
+                        <div style="margin-top:8px; text-align:right;">
+                            <button class="btn-touch" style="font-size:0.7rem; padding:4px 8px; background:var(--accent-color); color:#fff; border:none; border-radius:6px;" onclick="window.app && window.app.loadModule && window.app.loadModule('karyawan')">Kelola Modul Karyawan</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Kontainer Chart Canvas -->
                 <div class="setting-card" style="margin-top:10px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:10px;">
                     <h4 style="margin-bottom:8px; color:var(--text-color); font-size:0.85rem;">
                         Grafik Trend Penjualan ${this.filterType === 'today' ? '(Petransaksi / Jam)' : ''}
@@ -782,7 +875,7 @@ const LaporanModule = {
     init() {
         window.LaporanModule = this;
 
-document.getElementById('filter-period')?.addEventListener('change', (e) => {
+        document.getElementById('filter-period')?.addEventListener('change', (e) => {
             this.filterType = e.target.value;
             this.currentPage = 1;
             if (this.filterType !== 'custom') {
@@ -871,28 +964,23 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             });
         });
 
-        // Tunda eksekusi renderChart agar DOM benar-benar ter-layout
         setTimeout(() => {
             this.renderChart();
         }, 50);
 
-        // ResizeListener agar grafik menyesuaikan layar ketika di-resize
         if (this._resizeHandler) {
             window.removeEventListener('resize', this._resizeHandler);
         }
         this._resizeHandler = () => this.renderChart();
         window.addEventListener('resize', this._resizeHandler);
 
-        // ===== AUTO TRIGGER PROMOSI =====
         this.triggerAutoPromosiScan();
     },
 
     async triggerAutoPromosiScan() {
         try {
-            // Debounce agar tidak spam saat ganti filter cepat
             if (this._autoPromosiTimeout) clearTimeout(this._autoPromosiTimeout);
             this._autoPromosiTimeout = setTimeout(async () => {
-                // Coba ambil module yang sudah ada di window, atau dynamic import
                 let promosiMod = window.PromosiModule;
                 if (!promosiMod) {
                     try {
@@ -907,15 +995,9 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
                 if (promosiMod && typeof promosiMod.analyzeLaporanData === 'function') {
                     console.log('🤖 [Laporan] Auto-trigger scan promosi...');
                     await promosiMod.analyzeLaporanData({ silent: true });
-                    // Simpan notifikasi untuk ditampilkan di badge promosi
                     window._autoPromoCount = (promosiMod.autoSuggestions || []).filter(s => s.status === 'suggested').length;
-                    // Optional: tampilkan toast kecil
-                    if (window._autoPromoCount > 0 && !window._autoPromoToastShown) {
-                        console.log(`🔔 ${window._autoPromoCount} peluang promo baru terdeteksi dari laporan`);
-                        // window._autoPromoToastShown = true; // aktifkan jika tidak mau spam
-                    }
                 }
-            }, 1200); // delay 1.2 detik setelah filter berubah
+            }, 1200);
         } catch(err) {
             console.warn('Auto promosi scan error:', err);
         }
@@ -945,7 +1027,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             if (this.filterType === 'today') {
                 return itemDate.toDateString() === now.toDateString();
             } else if (this.filterType === 'week') {
-                // Filter Minggu Ini (Senin s/d Minggu)
                 const currentDay = now.getDay();
                 const diffToMonday = (currentDay === 0 ? -6 : 1 - currentDay);
                 
@@ -1070,7 +1151,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
         document.body.removeChild(link);
     },
 
-    // EKSPOR LENGKAP DENGAN DETAIL ITEM (JSON)
     exportToJSON() {
         const filtered = this.getFilteredTransactions();
         if (!filtered.length) return alert('Tidak ada data transaksi untuk diekspor.');
@@ -1086,7 +1166,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
         document.body.removeChild(link);
     },
 
-    // IMPOR LAPORAN LENGKAP (JSON)
     async importFromJSON(event) {
         const file = event.target.files[0];
         if (!file) return;
@@ -1122,25 +1201,20 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
         reader.readAsText(file);
     },
 
-    // ===== FIXED CHART - SUPPORT TODAY/WEEK/MONTH/YEAR/CUSTOM =====
     renderChart() {
         const canvas = document.getElementById('chart-penjualan');
         const container = document.getElementById('chart-container');
         if (!canvas || !container) return;
 
         const ctx = canvas.getContext('2d');
-        
-        // Fix canvas size dengan DPR untuk crisp + fallback jika container 0
         const rect = container.getBoundingClientRect();
         let width = rect.width || container.clientWidth || container.offsetWidth || 320;
         let height = rect.height || container.clientHeight || 220;
-        if (width < 50) width = window.innerWidth - 32 || 320; // fallback jika hidden
+        if (width < 50) width = window.innerWidth - 32 || 320;
         const dpr = window.devicePixelRatio || 1;
         
-        // Set ukuran display
         canvas.style.width = width + 'px';
         canvas.style.height = height + 'px';
-        // Set ukuran internal untuk DPR
         canvas.width = width * dpr;
         canvas.height = height * dpr;
         ctx.setTransform(1,0,0,1,0,0);
@@ -1159,15 +1233,12 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             return d;
         };
 
-        // Urutkan lama -> baru
         const sorted = [...filtered].sort((a,b)=>{
             const da = parseDate(a); const db = parseDate(b);
             return (da?da.getTime():0) - (db?db.getTime():0);
         });
 
         if (this.filterType === 'today') {
-            // PER TRANSAKSI + PER JAM: tampilkan per transaksi (maks 20 terakhir agar tidak padat)
-            // Jika transaksi hari ini >20, agregasi per jam
             if (sorted.length <= 20) {
                 labels = sorted.map(t=>{
                     const d = parseDate(t);
@@ -1175,7 +1246,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
                 });
                 values = sorted.map(t=> Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0));
             } else {
-                // Agregasi per jam 0-23
                 const hourMap = {};
                 for (let h=0; h<24; h++) hourMap[h]=0;
                 sorted.forEach(t=>{
@@ -1183,7 +1253,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
                     if (!d) return;
                     hourMap[d.getHours()] += Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0);
                 });
-                // Hanya jam yang ada transaksi atau rentang 07-22
                 labels = [];
                 values = [];
                 for (let h=0; h<24; h++) {
@@ -1194,7 +1263,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
                 }
             }
         } else if (this.filterType === 'week') {
-            // MINGGUAN: 7 hari Senin-Minggu
             const now = new Date();
             const currentDay = now.getDay();
             const diffToMonday = (currentDay === 0 ? -6 : 1 - currentDay);
@@ -1219,7 +1287,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             labels = Object.values(weekMap).map(v=>v.label);
             values = Object.values(weekMap).map(v=>v.value);
         } else if (this.filterType === 'month') {
-            // BULANAN: per tanggal 1-31
             const now = new Date();
             const year = now.getFullYear();
             const month = now.getMonth();
@@ -1233,12 +1300,9 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
                     monthMap[dt.getDate()] += Number(t.total ?? t.grandTotal ?? t.subtotal ?? 0);
                 }
             });
-            // Tampilkan hanya yang ada data + label ringkas
             labels = Object.keys(monthMap).map(d=> `${d}`);
             values = Object.values(monthMap);
-            // Jika terlalu banyak (31), tetap tampilkan semua tapi font kecil
         } else if (this.filterType === 'year') {
-            // TAHUNAN: per bulan Jan-Des
             const monthNames = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
             const yearMap = {};
             monthNames.forEach((_,i)=> yearMap[i]=0);
@@ -1250,9 +1314,7 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             labels = monthNames;
             values = monthNames.map((_,i)=> yearMap[i]);
         } else if (this.filterType === 'custom') {
-            // CUSTOM: per hari dalam range
             if (!this.customStartDate || !this.customEndDate) {
-                // fallback per tanggal
                 const dayMap = {};
                 sorted.forEach(t=>{
                     const d = parseDate(t);
@@ -1283,7 +1345,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             }
         }
 
-        // Bersihkan canvas (pakai ukuran display, bukan DPR)
         ctx.clearRect(0,0,width,height);
 
         if (labels.length === 0 || values.every(v=>v===0)) {
@@ -1294,19 +1355,15 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             return;
         }
 
-        // Jika monthly 31 hari, tampilkan slice agar tidak terlalu padat tapi tetap semua bisa di-scroll? Kita tampilkan semua 31
-        // Untuk today per transaksi >12, kita sudah agregasi per jam
-
         const maxVal = Math.max(...values, 1);
         const paddingLeft = 45;
         const paddingRight = 15;
         const paddingTop = 25;
-        const paddingBottom = 45; // lebih tinggi untuk label 2 baris
+        const paddingBottom = 45;
 
         const chartWidth = width - (paddingLeft + paddingRight);
         const chartHeight = height - (paddingTop + paddingBottom);
 
-        // Grid horizontal
         ctx.strokeStyle = '#f1f5f9';
         ctx.lineWidth = 1;
         for (let i=0;i<=4;i++) {
@@ -1315,7 +1372,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             ctx.moveTo(paddingLeft, y);
             ctx.lineTo(width - paddingRight, y);
             ctx.stroke();
-            // label Y
             const val = Math.round(maxVal - (i * maxVal/4));
             ctx.fillStyle = '#94a3b8';
             ctx.font = '9px sans-serif';
@@ -1324,7 +1380,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             ctx.fillText(valLabel, paddingLeft-5, y+3);
         }
 
-        // Sumbu X garis
         ctx.beginPath();
         ctx.strokeStyle = '#cbd5e1';
         ctx.lineWidth = 1;
@@ -1340,7 +1395,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             return { x, y, val: values[idx], label };
         });
 
-        // Area gradient
         if (points.length > 0) {
             ctx.beginPath();
             ctx.moveTo(points[0].x, height - paddingBottom);
@@ -1354,7 +1408,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             ctx.fill();
         }
 
-        // Garis tren
         if (points.length > 1) {
             ctx.beginPath();
             ctx.strokeStyle = '#2563eb';
@@ -1368,10 +1421,8 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             ctx.stroke();
         }
 
-        // Titik & label
         points.forEach((p, idx) => {
-            // Hanya gambar titik jika value >0 atau jumlah label tidak terlalu banyak
-            if (labels.length > 25 && p.val===0) return; // skip titik 0 jika padat
+            if (labels.length > 25 && p.val===0) return;
             ctx.beginPath();
             ctx.arc(p.x, p.y, p.val>0 ? 4 : 2, 0, Math.PI*2);
             ctx.fillStyle = p.val>0 ? '#ffffff' : '#e2e8f0';
@@ -1380,7 +1431,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             ctx.lineWidth = p.val>0 ? 2 : 1;
             ctx.stroke();
 
-            // Label X - handle multi-line (mingguan)
             ctx.fillStyle = '#64748b';
             ctx.font = labels.length>15 ? '8px sans-serif' : '10px sans-serif';
             ctx.textAlign = 'center';
@@ -1389,12 +1439,10 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
                 ctx.fillText(parts[0], p.x, height - paddingBottom + 12);
                 ctx.fillText(parts[1], p.x, height - paddingBottom + 23);
             } else {
-                // Untuk monthly, tampilkan colek setiap 2 label jika terlalu padat
                 if (labels.length>15 && idx%2===1) return;
                 ctx.fillText(p.label, p.x, height - 10);
             }
 
-            // Label nilai (hanya jika >0 dan tidak terlalu padat)
             if (p.val>0 && labels.length <= 20) {
                 let valLabel = p.val >= 1000000 ? (p.val/1000000).toFixed(1)+'M' : p.val>=1000 ? Math.round(p.val/1000)+'k' : p.val;
                 ctx.fillStyle = '#0f172a';
@@ -1403,7 +1451,6 @@ document.getElementById('filter-period')?.addEventListener('change', (e) => {
             }
         });
 
-        // Judul kecil
         ctx.fillStyle = '#334155';
         ctx.font = 'bold 11px sans-serif';
         ctx.textAlign = 'left';

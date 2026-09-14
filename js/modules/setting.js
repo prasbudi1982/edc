@@ -41,18 +41,23 @@ const SettingModule = {
                         <input type="password" id="input-admin-new-pin" placeholder="✨ PIN Baru" style="width:100%; padding:10px 12px; margin-bottom:10px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; color:var(--text-primary);">
                         <button id="btn-update-admin-pin" style="width:100%; background:var(--accent-color, #2563eb); color:white; padding:10px; border-radius:10px; border:none; font-weight:600;">💾 Update PIN Admin</button>
                     </div>
+
                     <div style="background:var(--bg-primary); border:1px solid var(--border-color); border-radius:12px; padding:12px;">
                         <h5 style="color:var(--text-primary); font-size:0.85rem; margin:0 0 8px 0;">👤 Tambah Operator</h5>
                         <input type="text" id="input-op-name" placeholder="🧑 Nama Operator" style="width:100%; padding:10px 12px; margin-bottom:8px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; color:var(--text-primary);">
+                        
+                        <input type="tel" id="input-op-phone" placeholder="📞 Nomor HP / WhatsApp Operator (cth: 08123456789)" style="width:100%; padding:10px 12px; margin-bottom:8px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; color:var(--text-primary);">
+                        
                         <input type="password" id="input-op-pin" placeholder="🔒 PIN Operator" style="width:100%; padding:10px 12px; margin-bottom:10px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; color:var(--text-primary);">
                         <button id="btn-add-operator" style="width:100%; background:#10b981; color:white; padding:10px; border-radius:10px; border:none; font-weight:600;">➕ Simpan Operator</button>
+                        
                         <div style="margin-top:12px; border-top:1px dashed var(--border-color); padding-top:10px;">
                             <h5 style="color:var(--text-secondary); font-size:0.75rem; margin:0 0 8px 0;">📋 Daftar Operator (${operators.length})</h5>
                             <ul id="list-operators" style="list-style:none; padding:0; margin:0;">
                                 ${operators.length === 0 ? '<li style="color:var(--text-secondary); font-size:0.8rem; text-align:center; padding:8px; background:var(--bg-secondary); border-radius:8px;">🤷 Belum ada operator</li>' : ''}
                                 ${operators.map(op => `
                                     <li style="display:flex; justify-content:space-between; align-items:center; padding:9px 10px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; margin-bottom:6px;">
-                                        <span style="color:var(--text-primary); font-size:0.85rem;">👤 <b>${op.name}</b> <small style="color:var(--text-secondary);">${op.role.toUpperCase()}</small></span>
+                                        <span style="color:var(--text-primary); font-size:0.85rem;">👤 <b>${op.name}</b> <small style="color:var(--text-secondary);">(${op.phone || op.noHp || '-'}) [${op.role.toUpperCase()}]</small></span>
                                         <button class="btn-delete-op" data-id="${op.id}" style="color:#ef4444; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.2); padding:4px 10px; border-radius:7px; font-weight:700; font-size:0.7rem;">🗑️ Hapus</button>
                                     </li>
                                 `).join('')}
@@ -190,7 +195,6 @@ const SettingModule = {
     },
 
     init() {
-        // --- HANDLERS AKUN ---
         document.getElementById('btn-update-admin-pin')?.addEventListener('click', () => {
             const oldPin = document.getElementById('input-admin-old-pin').value.trim();
             const newPin = document.getElementById('input-admin-new-pin').value.trim();
@@ -206,10 +210,11 @@ const SettingModule = {
 
         document.getElementById('btn-add-operator')?.addEventListener('click', () => {
             const name = document.getElementById('input-op-name').value.trim();
+            const phone = document.getElementById('input-op-phone').value.trim();
             const pin = document.getElementById('input-op-pin').value.trim();
             if (!name || !pin) { alert('Nama dan PIN wajib diisi!'); return; }
             const operators = JSON.parse(localStorage.getItem('edc_operators') || '[]');
-            operators.push({ id: 'op_' + Date.now(), name, pin, role: 'operator' });
+            operators.push({ id: 'op_' + Date.now(), name, phone: phone || '-', noHp: phone || '-', pin, role: 'operator' });
             localStorage.setItem('edc_operators', JSON.stringify(operators));
             alert('Operator berhasil ditambahkan!');
             if (window.app) window.app.loadModule('setting');
@@ -227,7 +232,6 @@ const SettingModule = {
             });
         });
 
-        // --- HANDLERS DATABASE ---
         document.getElementById('btn-db-local')?.addEventListener('click', () => {
             DB.setMode('local');
             if (window.app) window.app.loadModule('setting');
@@ -259,7 +263,7 @@ const SettingModule = {
                 const q = query(collection(tempFs, 'products'), limit(1));
                 await getDocs(q);
                 alert('Koneksi Firebase Berhasil!'); await deleteApp(tempApp);
-            } catch (err) { console.error('[Firebase Test Error]:', err); alert(`Gagal Terhubung ke Firebase!\\n\\nError:\\n${err.message}`); }
+            } catch (err) { console.error('[Firebase Test Error]:', err); alert(`Gagal Terhubung ke Firebase!\n\nError:\n${err.message}`); }
             finally { btnTest.textContent = 'Tes Koneksi'; btnTest.disabled = false; }
         });
 
@@ -273,7 +277,6 @@ const SettingModule = {
             if (window.app) window.app.loadModule('setting');
         });
 
-        // --- HANDLERS SCANNER MODE SWITCH ---
         document.getElementById('btn-scanner-camera')?.addEventListener('click', () => {
             Scanner.setMode('camera');
             if (window.app) window.app.loadModule('setting');
@@ -283,7 +286,6 @@ const SettingModule = {
             if (window.app) window.app.loadModule('setting');
         });
 
-        // --- HANDLERS SCANNER DEVICE CONFIG BARU ---
         this.initScannerDeviceHandlers();
 
         document.getElementById('btn-printer-bt')?.addEventListener('click', () => {
@@ -299,10 +301,9 @@ const SettingModule = {
             if (window.app) window.app.loadModule('setting');
         });
         document.getElementById('btn-connect-printer')?.addEventListener('click', () => { Printer.connect(); });
-},
+    },
 
     initScannerDeviceHandlers() {
-        // Load log history
         const renderLog = () => {
             const logs = JSON.parse(localStorage.getItem('edc_scanner_test_log') || '[]');
             const logEl = document.getElementById('scanner-test-log');
@@ -334,7 +335,6 @@ const SettingModule = {
             localStorage.setItem('edc_scanner_last_test', text);
         };
 
-        // Config changes auto-save
         document.getElementById('input-scanner-device-type')?.addEventListener('change', (e) => {
             localStorage.setItem('edc_scanner_device_type', e.target.value);
             Scanner.setDeviceType(e.target.value);
@@ -355,7 +355,6 @@ const SettingModule = {
             if (tv) tv.textContent = e.target.value + 'ms';
         });
 
-        // === CONNECT BLUETOOTH BLE ===
         document.getElementById('btn-connect-bt')?.addEventListener('click', async () => {
             const btn = document.getElementById('btn-connect-bt');
             const orig = btn.textContent;
@@ -374,13 +373,12 @@ const SettingModule = {
                 }
             } catch (err) {
                 updateStatus(`Error BLE: ${err.message}`, false);
-                alert('Error Bluetooth: ' + err.message + '\\nPastikan pakai Chrome/Edge dan HTTPS.');
+                alert('Error Bluetooth: ' + err.message + '\nPastikan pakai Chrome/Edge dan HTTPS.');
             } finally {
                 btn.textContent = orig; btn.disabled = false;
             }
         });
 
-        // === CONNECT SERIAL ===
         document.getElementById('btn-connect-serial')?.addEventListener('click', async () => {
             const btn = document.getElementById('btn-connect-serial');
             const orig = btn.textContent;
@@ -401,7 +399,6 @@ const SettingModule = {
             }
         });
 
-        // === CONNECT HID ===
         document.getElementById('btn-connect-hid')?.addEventListener('click', async () => {
             const btn = document.getElementById('btn-connect-hid');
             const orig = btn.textContent;
@@ -422,14 +419,12 @@ const SettingModule = {
             }
         });
 
-        // === TEST SCANNER MODE ===
         let testModeActive = false;
         let testHandler = null;
 
         document.getElementById('btn-test-scanner')?.addEventListener('click', () => {
             const btn = document.getElementById('btn-test-scanner');
             if (testModeActive) {
-                // Stop test
                 testModeActive = false;
                 btn.textContent = '🧪 Test Scan';
                 btn.style.background = '#7c3aed';
@@ -443,7 +438,6 @@ const SettingModule = {
             btn.style.background = '#ef4444';
             updateStatus('Mode TEST AKTIF - Silakan scan barcode...', true);
 
-            // Handler khusus test
             let buffer = "";
             let timer = null;
             const minLen = parseInt(localStorage.getItem('edc_scanner_min_len') || '3');
@@ -457,23 +451,14 @@ const SettingModule = {
                         const timeStr = now.toLocaleTimeString('id-ID');
                         const logEntry = { time: timeStr, code: buffer, type: 'HID-TEST' };
                         
-                        // Simpan ke log
                         let logs = JSON.parse(localStorage.getItem('edc_scanner_test_log') || '[]');
                         logs.unshift(logEntry);
                         if (logs.length > 10) logs = logs.slice(0, 10);
                         localStorage.setItem('edc_scanner_test_log', JSON.stringify(logs));
                         renderLog();
 
-                        // Update status
                         updateStatus(`Scan OK: ${buffer} (${timeStr})`, true);
-                        
-                        // Feedback beep
                         if (navigator.vibrate) navigator.vibrate(100);
-                        
-                        // Coba cari produk
-                        if (window.app && window.app.modules && window.app.modules.pos) {
-                            // trigger feedback
-                        }
                     }
                     buffer = "";
                 } else if (e.key.length === 1) {
@@ -485,7 +470,6 @@ const SettingModule = {
 
             window.addEventListener('keydown', testHandler);
 
-            // Auto listener via Scanner callback juga
             Scanner.setTestCallback((code, type) => {
                 const now = new Date();
                 const timeStr = now.toLocaleTimeString('id-ID');
@@ -522,7 +506,6 @@ const SettingModule = {
             const minLen = parseInt(localStorage.getItem('edc_scanner_min_len') || '3');
             if (code.length < minLen) { alert(`Minimal ${minLen} karakter`); return; }
             
-            // Simulasi masuk ke sistem
             const now = new Date();
             const timeStr = now.toLocaleTimeString('id-ID');
             let logs = JSON.parse(localStorage.getItem('edc_scanner_test_log') || '[]');
@@ -532,13 +515,10 @@ const SettingModule = {
             renderLog();
             updateStatus(`Simulasi OK: ${code}`, true);
             
-            // Trigger ke Scanner handler
             Scanner.handleDecodedText(code);
             input.value = '';
         });
 
-
-        // === THEME SETTINGS LOGIC - TAMBAHAN BARU (tidak mengganggu scanner/db) ===
         const applyTheme = (theme) => {
             const body = document.body;
             const html = document.documentElement;
@@ -562,7 +542,6 @@ const SettingModule = {
         };
 
         const applyAccent = (color) => {
-            // FIX BUG TEMA TERANG: set di html DAN body dengan important
             document.documentElement.style.setProperty('--accent-color', color, 'important');
             document.documentElement.style.setProperty('--accent-hover', color, 'important');
             document.body.style.setProperty('--accent-color', color, 'important');
@@ -606,7 +585,6 @@ const SettingModule = {
         });
 
         document.getElementById('input-manual-barcode')?.addEventListener('keydown', (e) => {
-
             if (e.key === 'Enter') {
                 e.preventDefault();
                 document.getElementById('btn-simulate-scan').click();

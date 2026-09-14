@@ -30,8 +30,6 @@ const ProdukModule = {
         return Number(p.buyPrice ?? p.costPrice ?? 0);
     },
 
-
-
     // === HELPER EXPIRED / RUSAK - CENTRAL DI PRODUK.JS ===
     getExpiredInfo(p) {
         const expStr = p.expiredDate || p.expired || p.expired_date || p.expDate || p.tgl_expired || p.expiry || p.tglExpired;
@@ -82,7 +80,6 @@ const ProdukModule = {
             if ((p.kondisi==='rusak' || p.status==='rusak') || hasRusakLog) {
                 rusakProducts++;
                 rusakPcs += rusakQtyFromLog || (p.kondisi==='rusak' || p.status==='rusak' ? stock : 0);
-                // untuk kompatibilitas UI lama, rusak = total pcs
                 rusak = rusakPcs;
                 const logLoss = disposalLogs.filter(l=>String(l.prodId)===String(p.id) && l.type==='rusak').reduce((s,l)=>s+Number(l.costLoss||0),0);
                 totalLoss += logLoss || (rusakQtyFromLog * cost) || (stock * cost);
@@ -97,8 +94,6 @@ const ProdukModule = {
             else if (info.isNear) { near++; }
             else { baik++; }
         });
-        // near juga pcs? near tetap count produk (H-30)
-        // Return tambahan rusakPcs & expiredPcs biar UI bisa tampil "2 produk • 3 pcs"
         return { total: all.length, baik, near, expired, expiredPcs, expiredProducts, rusak, rusakPcs, rusakProducts, totalLoss };
     },
 
@@ -137,7 +132,6 @@ const ProdukModule = {
                     </div>
                 </div>
 
-                
                 <!-- FILTER STATUS -->
                 <div style="display:flex; gap:4px; margin-top:8px; overflow-x:auto; padding-bottom:4px;">
                     ${[
@@ -149,7 +143,6 @@ const ProdukModule = {
                     ].map(f=>`<button class="btn-touch ${this.filterStatus===f.id?'active':''}" data-filter="${f.id}" style="font-size:0.7rem; padding:5px 10px; white-space:nowrap;">${f.label}</button>`).join('')}
                 </div>
 
-
                 <div class="setting-card" style="margin-top:8px; padding:8px;">
                     <div style="display:flex; gap:6px;">
                         <button id="btn-export-products" class="btn-touch active" style="flex:1; font-size:0.75rem;">
@@ -159,7 +152,7 @@ const ProdukModule = {
                             <i data-lucide="upload"></i> Impor CSV
                         </button>
                     </div>
-                    <input type="file" id="file-import-products" accept=".csv" style="display:none;">
+                    <input type="file" id="file-import-products" accept=".csv, text/csv, application/vnd.ms-excel" style="display:none;">
                 </div>
 
                 <button id="btn-toggle-prod-scanner" class="btn-scanner-toggle ${this.scannerActive ? 'active' : ''}" style="margin-top:6px;">
@@ -223,8 +216,7 @@ const ProdukModule = {
                             <option value="Lain-lain">Lain-lain</option>
                         </optgroup>
                     </select>
-                    
-                                        <!-- PATCH GROSIR -->
+
                     <div style="display:flex; gap:4px; margin-bottom:4px;">
                         <select id="prod-satuan-beli" class="form-control" style="flex:1;"><option value="pcs">PCS</option><option value="dus" selected>DUS</option><option value="pack">PACK</option><option value="karung">KARUNG</option></select>
                         <input type="number" id="prod-isi-per-satuan" class="form-control" placeholder="Isi per dus" style="flex:1;" value="40">
@@ -251,7 +243,6 @@ const ProdukModule = {
                         </div>
                     </div>
 
-                    <!-- PAJAK PER PRODUK - FIX DARK MODE SYNC -->
                     <div style="margin:0 0 6px 0; padding:10px; background:var(--bg-card, #1e293b); border:1px solid var(--border-color, #334155); border-radius:8px;">
                         <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.85rem; font-weight:600; color:var(--text-color, #e2e8f0);">
                             <input type="checkbox" id="prod-tax-enabled" style="width:18px; height:18px; accent-color:var(--accent-color, #3b82f6);">
@@ -323,7 +314,6 @@ const ProdukModule = {
                                         <span style="display:flex; gap:6px; line-height:1.35; margin:0;"><span style="color:var(--text-secondary);">•</span> <span>Jual: <b style="color:var(--text-primary);">Rp${Number(p.price).toLocaleString('id-ID')}/pcs</b></span></span>
                                     </div>
                                     ${(() => {
-                                        // Hitung total rusak dari log (bukan cuma disposal terakhir)
                                         let totalRusakPcs = 0;
                                         let lastReason = '';
                                         try {
@@ -332,7 +322,6 @@ const ProdukModule = {
                                             totalRusakPcs = myLogs.reduce((s,l)=>s+Number(l.qty||0),0);
                                             if(myLogs.length>0) lastReason = myLogs[myLogs.length-1].reason||'';
                                         } catch(e){}
-                                        // Fallback ke p.disposal kalau belum ada di LS (data lama)
                                         if(totalRusakPcs===0 && p.disposal && p.disposal.type==='rusak') {
                                             totalRusakPcs = Number(p.disposal.qty||0);
                                             lastReason = p.disposal.reason||'';
@@ -340,7 +329,6 @@ const ProdukModule = {
                                         if(totalRusakPcs>0) {
                                             return `<div style="font-size:0.65rem; color:#ef4444; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); padding:3px 6px; border-radius:6px; margin-top:4px; display:inline-block;">🚮 ${totalRusakPcs} pcs rusak${lastReason ? ' - '+lastReason : ''}</div>`;
                                         }
-                                        // Kalau ada disposal expired juga tampilkan
                                         if(p.disposal && p.disposal.type==='expired') {
                                             return `<div style="font-size:0.65rem; color:#ef4444; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); padding:3px 6px; border-radius:6px; margin-top:4px; display:inline-block;">🚮 ${p.disposal.qty} pcs expired - ${p.disposal.reason||''}</div>`;
                                         }
@@ -369,7 +357,6 @@ const ProdukModule = {
     },
 
     afterRender() {
-        // Simpan referensi global untuk onclick inline jika ada
         window.ProdukModule = this;
 
         document.getElementById('btn-open-add')?.addEventListener('click', () => {
@@ -386,7 +373,7 @@ const ProdukModule = {
             this.resetForm();
         });
         document.getElementById('btn-save-product')?.addEventListener('click', () => this.saveProduct());
-        // AUTO ISI HARGA BELI PCS - TANPA LIVE PREVIEW
+
         const _isiEl2 = document.getElementById('prod-isi-per-satuan');
         const _hargaBeliDusEl2 = document.getElementById('prod-harga-beli-dus');
         const _buyEl2 = document.getElementById('prod-buy-price');
@@ -401,7 +388,16 @@ const ProdukModule = {
         _hargaBeliDusEl2?.addEventListener('input', _autoBuy);
 
         document.getElementById('btn-export-products')?.addEventListener('click', () => this.exportProductsCSV());
-        document.getElementById('btn-trigger-import')?.addEventListener('click', () => document.getElementById('file-import-products')?.click());
+        
+        // FIX: trigger file input secara konsisten
+        document.getElementById('btn-trigger-import')?.addEventListener('click', () => {
+            const fileInput = document.getElementById('file-import-products');
+            if (fileInput) {
+                fileInput.value = '';
+                fileInput.click();
+            }
+        });
+        
         document.getElementById('file-import-products')?.addEventListener('change', (e) => this.importProductsCSV(e));
         document.getElementById('btn-toggle-prod-scanner')?.addEventListener('click', () => this.toggleScanner());
         document.getElementById('btn-toggle-flash')?.addEventListener('click', () => this.toggleFlashlight());
@@ -425,7 +421,7 @@ const ProdukModule = {
                 this.editProduct(id);
             });
         });
-        // Filter status
+
         document.querySelectorAll('[data-filter]').forEach(btn=>{
             btn.addEventListener('click', (e)=>{
                 this.filterStatus = e.currentTarget.dataset.filter;
@@ -456,7 +452,6 @@ const ProdukModule = {
             });
         });
 
-        // Listener Pajak - FIX: pastikan element ada
         const taxCheck = document.getElementById('prod-tax-enabled');
         const taxGroup = document.getElementById('prod-tax-group');
         const taxRate = document.getElementById('prod-tax-rate');
@@ -469,7 +464,6 @@ const ProdukModule = {
         });
     },
 
-    // alias untuk kompatibilitas jika app memanggil init()
     async init() {
         this.afterRender();
     },
@@ -495,25 +489,26 @@ const ProdukModule = {
         }
     },
 
-                _searchDebounce: null,
-        handleSearch(val) {
-            clearTimeout(this._searchDebounce);
-            this._searchDebounce = setTimeout(() => {
-                this.searchQuery = (val || '').toLowerCase().trim();
-                this.currentPage = 1;
-                const container = document.getElementById('product-list-container');
-                if(!container){
-                    window.app.loadModule('produk');
-                    return;
-                }
-                const filtered = this.getFilteredProductsForDisplay();
-                const totalPages = Math.ceil(filtered.length / this.itemsPerPage) || 1;
-                const pagInfo = document.querySelector('#product-pagination-info');
-                if(pagInfo) pagInfo.textContent = `Hal ${this.currentPage} dari ${totalPages}`;
-                const pageItems = filtered.slice((this.currentPage - 1) * this.itemsPerPage, this.currentPage * this.itemsPerPage);
-                this.renderProductListOnly(pageItems);
-            }, 180);
-        },
+    _searchDebounce: null,
+    handleSearch(val) {
+        clearTimeout(this._searchDebounce);
+        this._searchDebounce = setTimeout(() => {
+            this.searchQuery = (val || '').toLowerCase().trim();
+            this.currentPage = 1;
+            const container = document.getElementById('product-list-container');
+            if(!container){
+                window.app.loadModule('produk');
+                return;
+            }
+            const filtered = this.getFilteredProductsForDisplay();
+            const totalPages = Math.ceil(filtered.length / this.itemsPerPage) || 1;
+            const pagInfo = document.querySelector('#product-pagination-info');
+            if(pagInfo) pagInfo.textContent = `Hal ${this.currentPage} dari ${totalPages}`;
+            const pageItems = filtered.slice((this.currentPage - 1) * this.itemsPerPage, this.currentPage * this.itemsPerPage);
+            this.renderProductListOnly(pageItems);
+        }, 180);
+    },
+
     renderProductListOnly(pageItems){
         const container = document.getElementById('product-list-container');
         if(!container) return;
@@ -608,7 +603,6 @@ const ProdukModule = {
         if (!name) return alert('Nama produk wajib diisi!');
         if (!price) return alert('Harga jual wajib diisi!');
 
-        // FIX: cegah SKU/barcode duplikat saat tambah manual (case-insensitive)
         if (barcode) {
             const dup = this.products.find(p => p.barcode && p.barcode.trim().toLowerCase() === barcode.toLowerCase() && String(p.id) !== String(id));
             if (dup) {
@@ -631,11 +625,8 @@ const ProdukModule = {
             const hargaJualDus = Number(hargaJualDusEl?.value) || 0;
             let finalBuyPrice = buyPrice;
             if(hargaBeliDus>0 && isiPerSatuan>1){ finalBuyPrice = hargaBeliDus / isiPerSatuan; }
-            // AUTO KONVERSI: jika satuan beli bukan pcs, stok input dianggap dalam satuan tersebut
             let finalStock = stock;
             if(satuanBeli !== 'pcs' && isiPerSatuan>1){
-                // Jika ini produk baru (id kosong) atau user input stok dalam satuan grosir, konversi ke pcs
-                // Untuk edit, stock input sudah dalam satuan grosir (dari editProduct), jadi tetap konversi
                 finalStock = Math.round(stock * isiPerSatuan);
             }
             const payload = {
@@ -684,8 +675,6 @@ const ProdukModule = {
             const satuan = prod.satuanBeli||'pcs';
             let addPcs = qty;
             if(satuan!=='pcs' && isi>1){
-                // qty dianggap dalam satuan grosir jika qty kecil, konversi ke pcs
-                // Contoh quickRestock(2 dus) -> +80 pcs
                 addPcs = qty * isi;
             }
             prod.stock = Number(prod.stock) + addPcs;
@@ -697,7 +686,6 @@ const ProdukModule = {
 
     async editProduct(id) {
         const p = this.products.find(item => String(item.id) === String(id));
-        // Auto konversi stok ke satuan saat edit agar user lihat dalam dus/pak
         const _isiForEdit = Number(p.isiPerSatuan || p.isiPerDus || 1);
         const _satuanForEdit = p.satuanBeli || 'pcs';
         const stockInput = document.getElementById('prod-stock');
@@ -709,13 +697,12 @@ const ProdukModule = {
                 stockInput.value = p.stock;
             }
         }
-        setTimeout(()=>{ const a=document.getElementByIdntById('prod-satuan-beli'); const b=document.getElementById('prod-isi-per-satuan'); const c=document.getElementById('prod-harga-beli-dus'); const d=document.getElementById('prod-harga-jual-dus'); if(a) a.value=p.satuanBeli||'pcs'; if(b) b.value=p.isiPerSatuan||p.isiPerDus||1; if(c) c.value=p.hargaBeliDus||''; if(d) d.value=p.hargaJualDus||p.hargaJualGrosir||''; },100);
+        setTimeout(()=>{ const a=document.getElementById('prod-satuan-beli'); const b=document.getElementById('prod-isi-per-satuan'); const c=document.getElementById('prod-harga-beli-dus'); const d=document.getElementById('prod-harga-jual-dus'); if(a) a.value=p.satuanBeli||'pcs'; if(b) b.value=p.isiPerSatuan||p.isiPerDus||1; if(c) c.value=p.hargaBeliDus||''; if(d) d.value=p.hargaJualDus||p.hargaJualGrosir||''; },100);
         if (!p) {
             alert('Produk tidak ditemukan: ' + id);
             return;
         }
 
-        // Pastikan form ada dulu
         const card = document.getElementById('form-product-card');
         if (!card) {
             alert('Form produk tidak ditemukan');
@@ -748,8 +735,6 @@ const ProdukModule = {
         if (minStockEl) minStockEl.value = p.minStock ?? p.min_stock ?? 5;
         if (expEl) expEl.value = p.expiredDate || p.expired || p.expired_date || p.tgl_expired || '';
 
-        const enabled = !!(p.taxEnabled || (p.taxPercent > 0) || (p.taxRate > 0 && p.taxEnabled !== false && p.taxPercent !== 0 ? true : false));
-        // logic lebih aman: cek taxEnabled secara eksplisit
         const isTaxOn = p.taxEnabled === true || (p.taxEnabled === undefined && (p.taxRate > 0 || p.taxPercent > 0));
         const rate = p.taxRate ?? p.taxPercent ?? 11;
 
@@ -789,44 +774,100 @@ const ProdukModule = {
         document.body.removeChild(link);
     },
 
+    // Helper parser baris CSV tahan tanda petik & koma di dalam teks
+    parseCSVLine(line) {
+        const result = [];
+        let current = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            if (char === '"') {
+                inQuotes = !inQuotes;
+            } else if (char === ',' && !inQuotes) {
+                result.push(current.trim().replace(/^"|"$/g, ''));
+                current = '';
+            } else {
+                current += char;
+            }
+        }
+        result.push(current.trim().replace(/^"|"$/g, ''));
+        return result;
+    },
+
+    // FIX IMPOR CSV: Mendukung berbagai format file CSV, penanganan encoding, dan ekstensi file
     importProductsCSV(e) {
-        const file = e.target.files[0];
+        const file = e.target.files && e.target.files[0];
         if (!file) return;
+
+        const fileName = file.name.toLowerCase();
+        if (!fileName.endsWith('.csv') && file.type && !file.type.includes('csv') && !file.type.includes('excel')) {
+            alert('Format file tidak didukung! Harap pilih file dengan ekstensi .csv');
+            return;
+        }
 
         const reader = new FileReader();
         reader.onload = async (evt) => {
-            const lines = evt.target.result.split('\n');
-            let success = 0;
-            for (let i = 1; i < lines.length; i++) {
-                const line = lines[i].trim();
-                if (!line) continue;
-                const cols = line.split(',').map(c => c.replace(/^"|"$/g, '').trim());
-                if (cols.length >= 2) {
-                    const buyPrice = Number(cols[3]) || 0;
-                    const taxEnabled = cols[7] === '1' || cols[7]?.toLowerCase() === 'true';
-                    let taxRate = Number(cols[8]);
-                    if (isNaN(taxRate) && taxEnabled) taxRate = 11;
-                    if (isNaN(taxRate)) taxRate = 0;
-                    await DB.saveProduct({
-                        barcode: cols[0],
-                        name: cols[1],
-                        category: cols[2] || '',
-                        buyPrice: buyPrice,
-                        costPrice: buyPrice,
-                        price: Number(cols[4]) || 0,
-                        stock: Number(cols[5]) || 0,
-                        expiredDate: cols[6] || '',
-                        taxEnabled: taxEnabled,
-                        taxRate: taxRate,
-                        taxPercent: taxRate
-                    });
-                    success++;
+            try {
+                const content = evt.target.result;
+                if (!content || !content.trim()) {
+                    alert('File CSV kosong!');
+                    return;
                 }
+
+                // Normalisasi pemisah baris (\r\n -> \n)
+                const lines = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+                let success = 0;
+
+                for (let i = 1; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue;
+
+                    const cols = this.parseCSVLine(line);
+                    if (cols.length >= 2) {
+                        const barcode = cols[0] || '';
+                        const name = cols[1] || '';
+                        if (!name) continue;
+
+                        const category = cols[2] || '';
+                        const buyPrice = Number(cols[3]) || 0;
+                        const price = Number(cols[4]) || 0;
+                        const stock = Number(cols[5]) || 0;
+                        const expiredDate = cols[6] || '';
+                        const taxEnabled = cols[7] === '1' || String(cols[7]).toLowerCase() === 'true';
+                        let taxRate = Number(cols[8]);
+                        if (isNaN(taxRate) && taxEnabled) taxRate = 11;
+                        if (isNaN(taxRate)) taxRate = 0;
+
+                        await DB.saveProduct({
+                            barcode: barcode,
+                            name: name,
+                            category: category,
+                            buyPrice: buyPrice,
+                            costPrice: buyPrice,
+                            price: price,
+                            stock: stock,
+                            expiredDate: expiredDate,
+                            taxEnabled: taxEnabled,
+                            taxRate: taxRate,
+                            taxPercent: taxRate
+                        });
+                        success++;
+                    }
+                }
+
+                alert(`Berhasil mengimpor ${success} produk!`);
+                window.app.loadModule('produk');
+            } catch (err) {
+                console.error('Error impor CSV:', err);
+                alert('Gagal mengimpor file CSV: ' + err.message);
             }
-            alert(`Berhasil mengimpor ${success} produk!`);
-            window.app.loadModule('produk');
         };
-        reader.readAsText(file);
+
+        reader.onerror = () => {
+            alert('Gagal membaca file CSV!');
+        };
+
+        reader.readAsText(file, 'UTF-8');
     },
 
     toggleScanner() {
@@ -930,9 +971,7 @@ const ProdukModule = {
         const reason = prompt('Alasan rusak:', '') || '';
         const newStock = Number(p.stock)-q;
         const disposal = { type:'rusak', qty:q, reason, date:new Date().toISOString(), costLoss: q*(p.buyPrice??p.costPrice??0) };
-        // Simpan log
         try { await DB.saveDisposalLog({prodId:p.id, prodName:p.name, ...disposal}); } catch(e){}
-        // Update produk
         const update = {...p, stock:newStock, kondisi: newStock===0 ? 'rusak' : p.kondisi, disposal, lastOpname:new Date().toISOString()};
         if(newStock===0) { update.status='rusak'; }
         await DB.saveProduct(update);
@@ -1030,7 +1069,7 @@ const ProdukModule = {
         if(diff===0) return alert('Stok sama, tidak perlu opname');
         const reason = prompt(`Selisih: ${diff>0?'+':''}${diff} pcs\nAlasan selisih:`, 'stok opname') || 'opname';
         const cost = Number(p.buyPrice ?? p.costPrice ?? p.cost ?? 0);
-        const costLoss = diff < 0 ? Math.abs(diff) * cost : 0; // hanya rugi kalau stok fisik < sistem
+        const costLoss = diff < 0 ? Math.abs(diff) * cost : 0;
         const log = { type:'opname', qty:Math.abs(diff), diff, reason, date:new Date().toISOString(), before:Number(p.stock), after:rs, costLoss, cost };
         try { await DB.saveDisposalLog({prodId:p.id, prodName:p.name, ...log}); } catch(e){}
         await DB.saveProduct({...p, stock:rs, opnameDiff:diff, lastOpname:new Date().toISOString(), lastOpnameReason:reason});
@@ -1048,7 +1087,6 @@ const ProdukModule = {
             if(prod) this.opnameProduct(prod.id);
             else alert('Produk tidak ditemukan: '+input);
         } else {
-            // buka mode opname: filterStatus opname
             this.filterStatus='all';
             alert('Mode Opname: Klik tombol Opname di tiap produk untuk sesuaikan stok fisik');
         }
@@ -1065,6 +1103,5 @@ const ProdukModule = {
         }
     }
 };
-
 
 export default ProdukModule;
