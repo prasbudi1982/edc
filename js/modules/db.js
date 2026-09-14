@@ -1,6 +1,6 @@
 const DB = {
     dbName: 'PosAppDB',
-    dbVersion: 6,
+    dbVersion: 7,
 
     mode: localStorage.getItem('edc_db_mode') || 'local',
     firestore: null,
@@ -118,6 +118,20 @@ const DB = {
                     if (!dispStore.indexNames.contains('type')) dispStore.createIndex('type', 'type', { unique: false });
                     if (!dispStore.indexNames.contains('date')) dispStore.createIndex('date', 'date', { unique: false });
                     if (!dispStore.indexNames.contains('syncStatus')) dispStore.createIndex('syncStatus', 'syncStatus', { unique: false });
+                }
+                // === NEW: ATTENDANCES - FIX LAPORAN LOGIN/LOGOUT ===
+                if (!db.objectStoreNames.contains('attendances')) {
+                    const attStore = db.createObjectStore('attendances', { keyPath: 'id' });
+                    attStore.createIndex('operatorId', 'operatorId', { unique: false });
+                    attStore.createIndex('loginTime', 'loginTime', { unique: false });
+                    attStore.createIndex('logoutTime', 'logoutTime', { unique: false });
+                    attStore.createIndex('syncStatus', 'syncStatus', { unique: false });
+                } else {
+                    const attStore = e.target.transaction.objectStore('attendances');
+                    if (!attStore.indexNames.contains('operatorId')) attStore.createIndex('operatorId', 'operatorId', { unique: false });
+                    if (!attStore.indexNames.contains('loginTime')) attStore.createIndex('loginTime', 'loginTime', { unique: false });
+                    if (!attStore.indexNames.contains('logoutTime')) attStore.createIndex('logoutTime', 'logoutTime', { unique: false });
+                    if (!attStore.indexNames.contains('syncStatus')) attStore.createIndex('syncStatus', 'syncStatus', { unique: false });
                 }
             };
 
@@ -303,6 +317,143 @@ const DB = {
         });
     },
 
+    // === ATTENDANCES - SYNC LAPORAN LOGIN/LOGOUT (JANGAN DIHAPUS MASSAL) ===
+    async getAttendances() {
+        let idbResult = [];
+        try {
+            const db = await this.open();
+            idbResult = await new Promise((resolve, reject) => {
+                try {
+                    const tx = db.transaction('attendances', 'readonly');
+                    const store = tx.objectStore('attendances');
+                    const req = store.getAll();
+                    req.onsuccess = () => resolve(req.result || []);
+                    req.onerror = () => resolve([]);
+                } catch(e){ resolve([]); }
+            });
+        } catch(e){ idbResult = []; }
+
+        let lsResult = [];
+        try { lsResult = JSON.parse(localStorage.getItem('edc_attendances')||'[]'); } catch(e){ lsResult = []; }
+
+        if (idbResult.length === 0 && lsResult.length > 0) return lsResult;
+
+        if (idbResult.length > 0 && lsResult.length > 0) {
+            const map = new Map();
+            [...idbResult, ...lsResult].forEach(a=>{
+                if(!a || !a.operatorId) return;
+                const key = a.id || `${a.operatorId}_${a.loginTime}`;
+                if(!map.has(key)) map.set(key, a);
+                else {
+                    const ex = map.get(key);
+                    if(!ex.logoutTime && a.logoutTime) ex.logoutTime = a.logoutTime;
+                    if(a.isPaid) { ex.isPaid = true; ex.paidAt = a.paidAt; }
+                }
+            });
+            return Array.from(map.values());
+        }
+        return idbResult;
+    },
+
+    async saveAttendance(att) {
+        const id = att.id || att.sessionKey || `att_${Date.now()}_${Math.random().toString(36).substring(2,5)}`;
+        const payload = {
+            id,
+            sessionKey: att.sessionKey || id,
+            operatorId: att.operatorId || att.id || '',
+            operatorName: att.operatorName || att.name || 'Unknown',
+            loginTime: att.loginTime || new Date().toISOString(),
+            logoutTime: att.logoutTime || null,
+            isPaid: !!att.isPaid,
+            paidAt: att.paidAt || null,
+            role: att.role || 'operator',
+            syncStatus: 'pending',
+            updatedAt: new Date().toISOString()
+        };
+
+        // 1. LS DULU - paling aman untuk laporan
+        try {
+            const existing = JSON.parse(localStorage.getItem('edc_attendances')||'[]');
+            const idx = existing.findIndex(x=>String(x.id)===String(payload.id));
+            if(idx>=0) {
+                // merge, jangan timpa loginTime
+                const cur = existing[idx];
+                if(!cur.logoutTime && payload.logoutTime) cur.logoutTime = payload.logoutTime;
+                if(payload.isPaid) { cur.isPaid = true; cur.paidAt = payload.paidAt; }
+                if(cur.id !== payload.id) cur.id = payload.id;
+                // update seluruh object jika ada logout
+                if(payload.logoutTime) existing[idx] = { ...cur, ...payload };
+            } else {
+                // cek duplikat by operatorId+loginTime
+                const dup = existing.find(x=>String(x.operatorId)===String(payload.operatorId) && x.loginTime && payload.loginTime && x.loginTime.slice(0,19)===payload.loginTime.slice(0,19));
+                if(dup) {
+                    if(!dup.logoutTime && payload.logoutTime) dup.logoutTime = payload.logoutTime;
+                } else {
+                    existing.push(payload);
+                }
+            }
+            if(existing.length>1000) existing.splice(0, existing.length-1000);
+            localStorage.setItem('edc_attendances', JSON.stringify(existing));
+        } catch(e){ console.warn('LS attendances save fail', e); }
+
+        // 2. IDB - jangan throw
+        try {
+            const db = await this.open();
+            await new Promise((resolve) => {
+                try {
+                    const tx = db.transaction('attendances', 'readwrite');
+                    const store = tx.objectStore('attendances');
+                    // ambil dulu untuk merge yang benar
+                    const getReq = store.get(id);
+                    getReq.onsuccess = () => {
+                        const cur = getReq.result;
+                        let toPut = payload;
+                        if(cur) {
+                            toPut = { ...cur, ...payload };
+                            if(!cur.logoutTime && payload.logoutTime) toPut.logoutTime = payload.logoutTime;
+                            // jangan timpa loginTime yang lebih awal
+                            if(cur.loginTime) toPut.loginTime = cur.loginTime;
+                        }
+                        const putReq = store.put(toPut);
+                        putReq.onsuccess = () => resolve();
+                        putReq.onerror = () => resolve();
+                    };
+                    getReq.onerror = () => {
+                        const putReq = store.put(payload);
+                        putReq.onsuccess = () => resolve();
+                        putReq.onerror = () => resolve();
+                    };
+                } catch(e){ resolve(); }
+            });
+        } catch(e){ console.warn('IDB attendances save fail, sudah ada di LS', e); }
+
+        try { this.syncPendingData(); } catch(e){}
+        return payload;
+    },
+
+    async deleteAttendance(id) {
+        // HATI-HATI: jangan pakai untuk hapus massal laporan. Hanya untuk edit/hapus single record.
+        try {
+            const ls = JSON.parse(localStorage.getItem('edc_attendances')||'[]');
+            const filtered = ls.filter(x=>String(x.id)!==String(id) && String(`${x.operatorId}_${x.loginTime}`)!==String(id));
+            localStorage.setItem('edc_attendances', JSON.stringify(filtered));
+        } catch(e){}
+        try {
+            const db = await this.open();
+            await new Promise((resolve) => {
+                try {
+                    const tx = db.transaction('attendances', 'readwrite');
+                    const store = tx.objectStore('attendances');
+                    const req = store.delete(id);
+                    req.onsuccess = () => resolve();
+                    req.onerror = () => resolve();
+                } catch(e){ resolve(); }
+            });
+        } catch(e){}
+        try { this.syncPendingData(); } catch(e){}
+        return true;
+    },
+
     async getPromotions() {
         const db = await this.open();
         return new Promise((resolve, reject) => {
@@ -473,6 +624,7 @@ const DB = {
         if (collectionName === 'disposal_logs') return this.saveDisposalLog({ id, ...payload });
         if (collectionName === 'members') return this.saveMember({ id, ...payload });
         if (collectionName === 'member_logs') return this.saveMemberLog({ id, ...payload });
+        if (collectionName === 'attendances') return this.saveAttendance({ id, ...payload });
     },
 
     async deleteDoc(collectionName, id) {
@@ -481,6 +633,7 @@ const DB = {
         if (collectionName === 'promotions') return this.deletePromotion(id);
         if (collectionName === 'disposal_logs') return this.deleteDisposalLog(id);
         if (collectionName === 'members') return this.deleteMember(id);
+        if (collectionName === 'attendances') return this.deleteAttendance(id);
     },
 
 
@@ -552,7 +705,7 @@ const DB = {
 
         try {
             const { doc, writeBatch } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js");
-            const stores = ['products', 'promotions', 'transactions', 'disposal_logs', 'members', 'member_logs'];
+            const stores = ['products', 'promotions', 'transactions', 'disposal_logs', 'members', 'member_logs', 'attendances'];
 
             for (const storeName of stores) {
                 const db = await this.open();
@@ -602,7 +755,7 @@ const DB = {
 
         try {
             const { collection, query, onSnapshot } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js");
-            const stores = ['products', 'promotions', 'transactions', 'disposal_logs', 'members', 'member_logs'];
+            const stores = ['products', 'promotions', 'transactions', 'disposal_logs', 'members', 'member_logs', 'attendances'];
 
             stores.forEach(storeName => {
                 const q = query(collection(fs, storeName));
