@@ -86,11 +86,12 @@ const LaporanModule = {
         return t.operator || t.admin || t.kasir || t.cashier || t.userName || 'Admin';
     },
 
-    // HELPER TERHUBUNG KE MODUL KARYAWAN: HITUNG TOTAL BEBAN GAJI & BONUS KARYAWAN
+    // HELPER SINKRONISASI DENGAN MODUL KARYAWAN TERBARU
     getKaryawanExpenseSummary() {
         const operators = JSON.parse(localStorage.getItem('edc_operators') || '[]');
-        const attendances = JSON.parse(localStorage.getItem('edc_attendances') || '[]');
+        const lsAttendances = JSON.parse(localStorage.getItem('edc_attendances') || '[]');
         const salaries = JSON.parse(localStorage.getItem('edc_salaries') || '[]');
+        const shifts = JSON.parse(localStorage.getItem('edc_shifts') || '[]');
         const now = new Date();
 
         let totalSalaryExpense = 0;
@@ -105,32 +106,57 @@ const LaporanModule = {
                 bonusPercent: 0
             };
 
-            // Process absensi
-            const opAttendances = attendances.filter(att => String(att.operatorId) === String(op.id));
-            const filteredLogs = opAttendances.map(att => {
-                const loginDate = new Date(att.loginTime);
-                if (isNaN(loginDate.getTime())) return null;
+            const opAttendances = lsAttendances.filter(att => String(att.operatorId) === String(op.id));
+            const opShift = shifts.find(s => String(s.operatorId) === String(op.id));
 
-                let logoutDate = att.logoutTime ? new Date(att.logoutTime) : null;
-                if (!logoutDate) {
+            const filteredLogs = opAttendances.map(att => {
+                let rawLoginDate = new Date(att.loginTime);
+                if (isNaN(rawLoginDate.getTime())) return null;
+
+                let rawLogoutDate = att.logoutTime ? new Date(att.logoutTime) : null;
+                let effectiveLoginDate = new Date(rawLoginDate);
+                let effectiveLogoutDate = (rawLogoutDate && !isNaN(rawLogoutDate.getTime())) ? new Date(rawLogoutDate) : null;
+                let shiftEndDate = null;
+
+                if (opShift && opShift.startTime && opShift.endTime) {
+                    const [startHour, startMinute] = opShift.startTime.split(':').map(Number);
+                    const [endHour, endMinute] = opShift.endTime.split(':').map(Number);
+
+                    const shiftStartDate = new Date(effectiveLoginDate);
+                    shiftStartDate.setHours(startHour, startMinute, 0, 0);
+
+                    shiftEndDate = new Date(effectiveLoginDate);
+                    shiftEndDate.setHours(endHour, endMinute, 0, 0);
+
+                    if (shiftEndDate < shiftStartDate) {
+                        shiftEndDate.setDate(shiftEndDate.getDate() + 1);
+                    }
+
+                    if (rawLoginDate < shiftStartDate) effectiveLoginDate = new Date(shiftStartDate);
+                    if (rawLogoutDate && rawLogoutDate > shiftEndDate) effectiveLogoutDate = new Date(shiftEndDate);
+                }
+
+                if (!att.logoutTime) {
+                    const searchEndBoundary = shiftEndDate || new Date(effectiveLoginDate.getFullYear(), effectiveLoginDate.getMonth(), effectiveLoginDate.getDate(), 23, 59, 59);
                     const opTrxs = this.transactions.filter(t => {
                         const tOpId = t.operator?.id || t.operatorId;
                         const tOpName = t.operator?.name || t.operator;
                         const matchesOp = String(tOpId) === String(op.id) || tOpName === opName;
                         const tDate = new Date(t.createdAt || t.timestamp);
-                        return matchesOp && tDate.toDateString() === loginDate.toDateString() && tDate >= loginDate;
+                        return matchesOp && tDate >= effectiveLoginDate && tDate <= searchEndBoundary;
                     }).sort((a,b) => new Date(b.createdAt||b.timestamp) - new Date(a.createdAt||a.timestamp));
 
                     if (opTrxs.length > 0) {
-                        logoutDate = new Date(opTrxs[0].createdAt || opTrxs[0].timestamp);
+                        effectiveLogoutDate = new Date(opTrxs[0].createdAt || opTrxs[0].timestamp);
                     } else {
-                        logoutDate = new Date();
+                        const curNow = new Date();
+                        effectiveLogoutDate = (shiftEndDate && curNow > shiftEndDate) ? new Date(shiftEndDate) : curNow;
                     }
                 }
 
-                const diffMs = Math.max(0, logoutDate - loginDate);
+                const diffMs = Math.max(0, effectiveLogoutDate - effectiveLoginDate);
                 const durationMinutes = Math.floor(diffMs / (1000 * 60));
-                return { date: loginDate, durationMinutes };
+                return { date: effectiveLoginDate, durationMinutes };
             }).filter(item => {
                 if (!item) return false;
                 const d = item.date;
@@ -163,7 +189,6 @@ const LaporanModule = {
 
             const totalMinutes = filteredLogs.reduce((sum, log) => sum + log.durationMinutes, 0);
 
-            // Rate calculation per minute
             let baseRate = salSetting.dailyRate;
             let standardMinutes = 480; 
             if (this.filterType === 'week') {
@@ -177,7 +202,6 @@ const LaporanModule = {
             const ratePerMinute = standardMinutes > 0 ? (baseRate / standardMinutes) : 0;
             const baseSalaryCalculated = Math.round(totalMinutes * ratePerMinute);
 
-            // Filter transaksi yang dilayani operator dalam periode laporan
             const filteredTrxs = this.getFilteredTransactions().filter(t => {
                 const tOpId = t.operator?.id || t.operatorId;
                 const tOpName = t.operator?.name || t.operator;
@@ -228,7 +252,6 @@ const LaporanModule = {
             }
         });
 
-        // === NEW: FILTER ASET AKTIF VS EXPIRED / RUSAK ===
         const getExpInfoLaporan = (p) => {
             const expStr = p.expiredDate || p.expired || p.expired_date || p.expDate || p.tgl_expired || p.expiry;
             if (!expStr) return { isExpired:false, isNear:false };
@@ -253,12 +276,11 @@ const LaporanModule = {
         let disposalLogs = [];
         let idbLogs = [];
         let lsLogs = [];
-        try { idbLogs = await DB.getDisposalLogs() || []; } catch(e){ idbLogs = []; console.warn('IDB getDisposalLogs error', e); }
+        try { idbLogs = await DB.getDisposalLogs() || []; } catch(e){ idbLogs = []; }
         try { lsLogs = JSON.parse(localStorage.getItem('edc_disposal_logs')||'[]'); } catch(e){ lsLogs = []; }
         const _map = new Map();
         [...idbLogs, ...lsLogs].forEach(l=>{ if(l && l.id) _map.set(l.id, l); else if(l) _map.set(`${l.prodId}-${l.date}-${l.type}`, l); });
         disposalLogs = Array.from(_map.values());
-        if(disposalLogs.length===0 && lsLogs.length>0) disposalLogs = lsLogs;
 
         const totalAsetPenjualan = activeProducts.reduce((sum, p) => sum + ((Number(p.price || p.hargaJual) || 0) * (Number(p.stock || p.stok) || 0)), 0);
         const totalAsetModal = activeProducts.reduce((sum, p) => {
@@ -293,13 +315,10 @@ const LaporanModule = {
         const totalLossExpiredLog = disposalExpired.reduce((s,l)=>s+(Number(l.costLoss)||0),0);
         const totalLossRusakLog = disposalRusak.reduce((s,l)=>s+(Number(l.costLoss)||0),0);
 
-        const totalLossOpname = disposalOpname.reduce((s,l)=>{
-            return s + (Number(l.costLoss||0));
-        },0);
+        const totalLossOpname = disposalOpname.reduce((s,l)=>s + (Number(l.costLoss||0)),0);
         const totalKerugianLog = totalLossExpiredLog + totalLossRusakLog + totalLossOpname;
         const totalOpnameSelisih = disposalOpname.reduce((s,l)=>s+Number(l.diff||0),0);
 
-        // === FITUR: PERINGATAN STOK MENIPIS - PER PRODUK ===
         const lowStockProducts = this.products.filter(p => {
             const min = Number(p.minStock ?? p.min_stock ?? 5);
             const stok = Number(p.stock ?? p.stok ?? 0);
@@ -345,7 +364,6 @@ const LaporanModule = {
                     </div>
                 </div>` : '';
 
-        // === FITUR BARU: PERINGATAN PRODUK EXPIRED ===
         const getExpiredInfo = (p) => {
             const expStr = p.expired || p.expired_date || p.expDate || p.tgl_expired || p.expiry || p.tglExpired || p.exp || p.expiredDate || p.tanggal_expired;
             if (!expStr) return null;
@@ -468,11 +486,9 @@ const LaporanModule = {
             };
         });
 
-        // === KARYAWAN EXPENSE CALCULATION & AKUMULASI LABA BERSIH ===
+        // KARYAWAN EXPENSE CALCULATION & AKUMULASI LABA BERSIH (SINKRON DENGAN MODUL KARYAWAN 3)
         const karyawanExpense = this.getKaryawanExpenseSummary();
         const totalBebanKaryawan = karyawanExpense.totalSalaryExpense;
-        
-        // Akumulasi laba bersih (Laba Kotor dikurangi Beban Karyawan)
         const totalLabaBersih = totalLabaKotor - totalBebanKaryawan;
 
         const profitMargin = totalOmset > 0 ? ((totalLabaBersih / totalOmset) * 100).toFixed(1) : '0.0';
@@ -993,7 +1009,6 @@ const LaporanModule = {
                     }
                 }
                 if (promosiMod && typeof promosiMod.analyzeLaporanData === 'function') {
-                    console.log('🤖 [Laporan] Auto-trigger scan promosi...');
                     await promosiMod.analyzeLaporanData({ silent: true });
                     window._autoPromoCount = (promosiMod.autoSuggestions || []).filter(s => s.status === 'suggested').length;
                 }

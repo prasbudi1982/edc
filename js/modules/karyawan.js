@@ -4,7 +4,11 @@ if (!window._karyawanState) {
     window._karyawanState = {
         activeTab: 'shift', // 'shift', 'absensi', 'gaji', 'slip'
         selectedOperatorId: '',
-        selectedPeriod: 'daily' // 'daily', 'weekly', 'monthly'
+        selectedPeriod: 'daily', // 'daily', 'weekly', 'monthly'
+        absensiSearchName: '',
+        absensiSearchDate: '',
+        absensiCurrentPage: 1,
+        absensiItemsPerPage: 10
     };
 }
 
@@ -24,10 +28,69 @@ const KaryawanModule = {
     get selectedPeriod() { return window._karyawanState.selectedPeriod; },
     set selectedPeriod(val) { window._karyawanState.selectedPeriod = val; },
 
+    get absensiSearchName() { return window._karyawanState.absensiSearchName; },
+    set absensiSearchName(val) { window._karyawanState.absensiSearchName = val; },
+
+    get absensiSearchDate() { return window._karyawanState.absensiSearchDate; },
+    set absensiSearchDate(val) { window._karyawanState.absensiSearchDate = val; },
+
+    get absensiCurrentPage() { return window._karyawanState.absensiCurrentPage; },
+    set absensiCurrentPage(val) { window._karyawanState.absensiCurrentPage = val; },
+
+    get absensiItemsPerPage() { return window._karyawanState.absensiItemsPerPage; },
+
     async render() {
         this.operators = JSON.parse(localStorage.getItem('edc_operators') || '[]');
         this.shifts = JSON.parse(localStorage.getItem('edc_shifts') || '[]');
-        this.attendances = JSON.parse(localStorage.getItem('edc_attendances') || '[]');
+        
+        let lsAttendances = [];
+        try {
+            lsAttendances = JSON.parse(localStorage.getItem('edc_attendances') || '[]');
+        } catch(e) { lsAttendances = []; }
+
+        let idbAttendances = [];
+        try {
+            if (DB && typeof DB.getAttendances === 'function') {
+                idbAttendances = await DB.getAttendances() || [];
+            }
+        } catch(e) { idbAttendances = []; }
+
+        let sessionAttendances = [];
+        try {
+            const activeOp = JSON.parse(localStorage.getItem('edc_active_operator') || 'null');
+            if (activeOp && (activeOp.loginTime || activeOp.timestamp)) {
+                sessionAttendances.push({
+                    id: activeOp.sessionKey || activeOp.id || ('att_' + (activeOp.loginTime || activeOp.timestamp)),
+                    operatorId: activeOp.id || activeOp.operatorId,
+                    operatorName: activeOp.name || activeOp.operatorName,
+                    loginTime: activeOp.loginTime || activeOp.timestamp,
+                    logoutTime: activeOp.logoutTime || null,
+                    isPaid: false
+                });
+            }
+        } catch(e) {}
+
+        const attendanceMap = new Map();
+        [...lsAttendances, ...idbAttendances, ...sessionAttendances].forEach(att => {
+            if (!att) return;
+            const key = att.id || `${att.operatorId || att.operatorName}_${att.loginTime}`;
+            if (!attendanceMap.has(key)) {
+                attendanceMap.set(key, att);
+            } else {
+                const existing = attendanceMap.get(key);
+                if (!existing.logoutTime && att.logoutTime) {
+                    attendanceMap.set(key, att);
+                }
+                if (att.isPaid) {
+                    attendanceMap.get(key).isPaid = true;
+                    attendanceMap.get(key).paidAt = att.paidAt;
+                }
+            }
+        });
+
+        this.attendances = Array.from(attendanceMap.values());
+        localStorage.setItem('edc_attendances', JSON.stringify(this.attendances));
+
         this.salaries = JSON.parse(localStorage.getItem('edc_salaries') || '[]');
         try {
             this.transactions = await DB.getTransactions() || [];
@@ -46,7 +109,6 @@ const KaryawanModule = {
                     <p style="color:var(--text-secondary); font-size:0.75rem; margin-top:2px;">Pembagian shift, absensi otomatis, pengelolaan gaji & bonus, serta slip gaji</p>
                 </div>
 
-                <!-- DUA TIER / 4 TAB LENGKAP -->
                 <div style="display:flex; gap:6px; overflow-x:auto; margin-bottom:14px; background:var(--bg-card); padding:6px; border-radius:12px; border:1px solid var(--border-color);">
                     <button class="tab-karyawan-btn ${this.activeTab === 'shift' ? 'active' : ''}" data-tab="shift" style="flex:1; padding:10px 6px; border:none; border-radius:8px; font-weight:700; font-size:0.75rem; cursor:pointer; white-space:nowrap; background:${this.activeTab==='shift'?'var(--accent-color, #2563eb)':'transparent'}; color:${this.activeTab==='shift'?'#fff':'var(--text-secondary)'};">
                         📅 1. Pembagian Shift
@@ -62,7 +124,6 @@ const KaryawanModule = {
                     </button>
                 </div>
 
-                <!-- KONTEN BERDASARKAN TAB -->
                 <div id="tab-content-karyawan">
                     ${this.renderTabContent()}
                 </div>
@@ -80,9 +141,6 @@ const KaryawanModule = {
         }
     },
 
-    // ==========================================
-    // TAB 1: PEMBAGIAN SHIFT
-    // ==========================================
     renderTabShift() {
         const opOptions = this.operators.map(op => `<option value="${op.id}">${op.name}</option>`).join('');
         return `
@@ -156,10 +214,28 @@ const KaryawanModule = {
     },
 
     // ==========================================
-    // TAB 2: ABSENSI OTOMATIS
+    // TAB 2: ABSENSI OTOMATIS (DENGAN SEARCH & PAGINATION)
     // ==========================================
     renderTabAbsensi() {
-        const processedLogs = this.getProcessedAbsensiLogs();
+        const allProcessed = this.getProcessedAbsensiLogs();
+
+        // Filter berdasarkan Nama dan Tanggal
+        const filtered = allProcessed.filter(log => {
+            const matchName = !this.absensiSearchName || log.operatorName.toLowerCase().includes(this.absensiSearchName.toLowerCase());
+            let matchDate = true;
+            if (this.absensiSearchDate) {
+                const searchD = new Date(this.absensiSearchDate).toDateString();
+                const logD = new Date(log.rawLoginTime).toDateString();
+                matchDate = searchD === logD;
+            }
+            return matchName && matchDate;
+        });
+
+        // Pagination Calculations
+        const totalPages = Math.ceil(filtered.length / this.absensiItemsPerPage) || 1;
+        if (this.absensiCurrentPage > totalPages) this.absensiCurrentPage = totalPages;
+        const startIndex = (this.absensiCurrentPage - 1) * this.absensiItemsPerPage;
+        const paginatedLogs = filtered.slice(startIndex, startIndex + this.absensiItemsPerPage);
 
         return `
             <div class="setting-card" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:12px; padding:14px;">
@@ -167,10 +243,18 @@ const KaryawanModule = {
                     <h4 style="margin:0; font-size:0.9rem; color:var(--text-primary);">⏱️ Catatan Absensi Otomatis Karyawan</h4>
                     <button onclick="KaryawanModule.refreshAbsensi()" style="padding:4px 8px; background:var(--accent-color); color:#fff; border:none; border-radius:6px; font-size:0.7rem; cursor:pointer;">🔄 Sync Absensi</button>
                 </div>
-                <p style="font-size:0.72rem; color:var(--text-secondary); margin:0 0 12px 0;">
-                    * <b>Jam Masuk:</b> Tercatat saat login.<br>
-                    * <b>Jam Keluar:</b> Tercatat saat logout atau diambil dari transaksi terakhir jika lupa logout.
-                </p>
+
+                <!-- PENCARIAN ABSENSI BY NAMA & TANGGAL -->
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; background:var(--bg-primary); padding:8px; border-radius:8px; border:1px solid var(--border-color);">
+                    <div>
+                        <label style="font-size:0.7rem; color:var(--text-secondary); font-weight:bold;">Cari Nama Karyawan:</label>
+                        <input type="text" id="search-absensi-name" value="${this.absensiSearchName}" placeholder="Ketik nama..." style="width:100%; padding:6px; margin-top:2px; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:6px; font-size:0.75rem;">
+                    </div>
+                    <div>
+                        <label style="font-size:0.7rem; color:var(--text-secondary); font-weight:bold;">Filter Tanggal:</label>
+                        <input type="date" id="search-absensi-date" value="${this.absensiSearchDate}" style="width:100%; padding:6px; margin-top:2px; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:6px; font-size:0.75rem;">
+                    </div>
+                </div>
 
                 <div style="overflow-x:auto;">
                     <table class="table-custom" style="width:100%; font-size:0.75rem; border-collapse:collapse; color:var(--text-color);">
@@ -181,30 +265,48 @@ const KaryawanModule = {
                                 <th style="padding:8px; color:var(--text-secondary);">Jam Masuk</th>
                                 <th style="padding:8px; color:var(--text-secondary);">Jam Keluar (Trx Terakhir)</th>
                                 <th style="padding:8px; color:var(--text-secondary);">Total Kerja</th>
-                                <th style="padding:8px; color:var(--text-secondary);">Status</th>
+                                <th style="padding:8px; color:var(--text-secondary);">Status Gaji</th>
+                                <th style="padding:8px; color:var(--text-secondary); text-align:center;">Aksi</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${processedLogs.length === 0 ? '<tr><td colspan="6" style="text-align:center; padding:12px;">Belum ada riwayat absensi.</td></tr>' : ''}
-                            ${processedLogs.map(log => `
+                            ${paginatedLogs.length === 0 ? '<tr><td colspan="7" style="text-align:center; padding:12px;">Belum ada riwayat absensi.</td></tr>' : ''}
+                            ${paginatedLogs.map(log => `
                                 <tr style="border-bottom:1px solid var(--border-color);">
                                     <td style="padding:8px; font-weight:bold; color:var(--text-primary);">${log.operatorName}</td>
                                     <td style="padding:8px;">${log.dateStr}</td>
                                     <td style="padding:8px; color:#22c55e; font-weight:bold;">🟢 ${log.loginTimeStr}</td>
                                     <td style="padding:8px; color:#ef4444; font-weight:bold;">🔴 ${log.logoutTimeStr} ${log.isAutoLogout ? '<span style="font-size:0.6rem; background:#f59e0b; color:#000; padding:1px 4px; border-radius:4px;">Auto Trx</span>' : ''}</td>
                                     <td style="padding:8px; font-weight:bold; color:var(--accent-color);">${log.durationFormatted} (${log.durationMinutes} mnt)</td>
-                                    <td style="padding:8px;"><span style="background:${log.status === 'Selesai' ? 'rgba(34,197,94,0.15)' : 'rgba(245,158,11,0.15)'}; color:${log.status === 'Selesai' ? '#22c55e' : '#f59e0b'}; padding:2px 6px; border-radius:4px; font-weight:bold;">${log.status}</span></td>
+                                    <td style="padding:8px;">
+                                        <span style="background:${log.isPaid ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}; color:${log.isPaid ? '#22c55e' : '#ef4444'}; padding:2px 6px; border-radius:4px; font-weight:bold;">
+                                            ${log.isPaid ? '✅ Lunas' : '⏳ Belum Dibayar'}
+                                        </span>
+                                    </td>
+                                    <td style="padding:8px; text-align:center; white-space:nowrap;">
+                                        <button onclick="KaryawanModule.editAbsensi('${log.id}')" style="background:rgba(37,99,235,0.12); color:var(--accent-color, #2563eb); border:1px solid rgba(37,99,235,0.3); padding:3px 6px; border-radius:4px; font-size:0.68rem; font-weight:bold; cursor:pointer; margin-right:4px;">✏️ Edit</button>
+                                        <button onclick="KaryawanModule.deleteAbsensi('${log.id}')" style="background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3); padding:3px 6px; border-radius:4px; font-size:0.68rem; font-weight:bold; cursor:pointer;">🗑️ Hapus</button>
+                                    </td>
                                 </tr>
                             `).join('')}
                         </tbody>
                     </table>
                 </div>
+
+                <!-- PAGINATION CONTROLS -->
+                ${totalPages > 1 ? `
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; padding:4px;">
+                        <button id="btn-absensi-prev" class="btn-touch" style="padding:4px 12px; font-size:0.75rem;" ${this.absensiCurrentPage <= 1 ? 'disabled style="opacity:0.5;"' : ''}>&laquo; Prev</button>
+                        <span style="font-size:0.75rem; color:var(--text-secondary);">Halaman <b>${this.absensiCurrentPage}</b> dari <b>${totalPages}</b></span>
+                        <button id="btn-absensi-next" class="btn-touch" style="padding:4px 12px; font-size:0.75rem;" ${this.absensiCurrentPage >= totalPages ? 'disabled style="opacity:0.5;"' : ''}>Next &raquo;</button>
+                    </div>
+                ` : ''}
             </div>
         `;
     },
 
     getProcessedAbsensiLogs() {
-        const rawAttendances = JSON.parse(localStorage.getItem('edc_attendances') || '[]');
+        const rawAttendances = this.attendances || [];
         return rawAttendances.map(att => {
             const op = this.operators.find(o => String(o.id) === String(att.operatorId));
             const opName = op ? op.name : (att.operatorName || 'Operator');
@@ -212,11 +314,10 @@ const KaryawanModule = {
             let rawLoginDate = new Date(att.loginTime);
             let rawLogoutDate = att.logoutTime ? new Date(att.logoutTime) : null;
 
-            // Cari shift operator
             const opShift = this.shifts.find(s => String(s.operatorId) === String(att.operatorId));
 
-            let effectiveLoginDate = new Date(rawLoginDate);
-            let effectiveLogoutDate = rawLogoutDate ? new Date(rawLogoutDate) : null;
+            let effectiveLoginDate = isNaN(rawLoginDate.getTime()) ? new Date() : new Date(rawLoginDate);
+            let effectiveLogoutDate = (rawLogoutDate && !isNaN(rawLogoutDate.getTime())) ? new Date(rawLogoutDate) : null;
             let shiftStartDate = null;
             let shiftEndDate = null;
 
@@ -224,23 +325,20 @@ const KaryawanModule = {
                 const [startHour, startMinute] = opShift.startTime.split(':').map(Number);
                 const [endHour, endMinute] = opShift.endTime.split(':').map(Number);
 
-                shiftStartDate = new Date(rawLoginDate);
+                shiftStartDate = new Date(effectiveLoginDate);
                 shiftStartDate.setHours(startHour, startMinute, 0, 0);
 
-                shiftEndDate = new Date(rawLoginDate);
+                shiftEndDate = new Date(effectiveLoginDate);
                 shiftEndDate.setHours(endHour, endMinute, 0, 0);
 
-                // Handle shift melewati tengah malam
                 if (shiftEndDate < shiftStartDate) {
                     shiftEndDate.setDate(shiftEndDate.getDate() + 1);
                 }
 
-                // Rule 1: Jika login sebelum jam shift -> hitung pada awal jam shift
                 if (rawLoginDate < shiftStartDate) {
                     effectiveLoginDate = new Date(shiftStartDate);
                 }
 
-                // Rule 2: Jika logout di atas jam shift -> hitung pada akhir jam shift
                 if (rawLogoutDate && rawLogoutDate > shiftEndDate) {
                     effectiveLogoutDate = new Date(shiftEndDate);
                 }
@@ -248,11 +346,9 @@ const KaryawanModule = {
 
             let isAutoLogout = false;
 
-            // Rule 3: Jika tidak logout pada rentang shift
             if (!att.logoutTime) {
-                const searchEndBoundary = shiftEndDate || new Date(rawLoginDate.getFullYear(), rawLoginDate.getMonth(), rawLoginDate.getDate(), 23, 59, 59);
+                const searchEndBoundary = shiftEndDate || new Date(effectiveLoginDate.getFullYear(), effectiveLoginDate.getMonth(), effectiveLoginDate.getDate(), 23, 59, 59);
 
-                // Transaksi terakhir pada rentang shift
                 const opTrxs = this.transactions.filter(t => {
                     const tOpId = t.operator?.id || t.operatorId;
                     const tOpName = t.operator?.name || t.operator;
@@ -265,7 +361,6 @@ const KaryawanModule = {
                     effectiveLogoutDate = new Date(opTrxs[0].createdAt || opTrxs[0].timestamp);
                     isAutoLogout = true;
                 } else {
-                    // Jika tidak ada transaksi, batasi maksimum pada akhir shift atau waktu saat ini
                     const now = new Date();
                     if (shiftEndDate && now > shiftEndDate) {
                         effectiveLogoutDate = new Date(shiftEndDate);
@@ -280,8 +375,12 @@ const KaryawanModule = {
             const hours = Math.floor(totalMinutes / 60);
             const mins = totalMinutes % 60;
 
+            const attId = att.id || `${att.operatorId}_${att.loginTime}`;
+
             return {
-                id: att.id,
+                id: attId,
+                rawLoginTime: att.loginTime,
+                rawLogoutTime: att.logoutTime,
                 operatorId: att.operatorId,
                 operatorName: opName,
                 dateStr: effectiveLoginDate.toLocaleDateString('id-ID', { day:'2-digit', month:'short', year:'numeric' }),
@@ -290,14 +389,68 @@ const KaryawanModule = {
                 durationMinutes: totalMinutes,
                 durationFormatted: `${hours} jam ${mins} mnt`,
                 isAutoLogout,
+                isPaid: !!att.isPaid,
+                paidAt: att.paidAt || null,
                 status: att.logoutTime ? 'Selesai' : (isAutoLogout ? 'Auto-Close' : 'Aktif Shift')
             };
         });
     },
 
-    // ==========================================
-    // TAB 3: GAJI & BONUS (DENGAN AUTO SINKRONISASI FIELD)
-    // ==========================================
+    async editAbsensi(id) {
+        const att = this.attendances.find(a => String(a.id || `${a.operatorId}_${a.loginTime}`) === String(id));
+        if (!att) return alert('Data absensi tidak ditemukan.');
+
+        const loginFormatted = att.loginTime ? new Date(att.loginTime).toISOString().slice(0, 16) : '';
+        const logoutFormatted = att.logoutTime ? new Date(att.logoutTime).toISOString().slice(0, 16) : '';
+
+        const newLoginStr = prompt('Edit Waktu Jam Masuk (YYYY-MM-DDTHH:MM):', loginFormatted);
+        if (newLoginStr === null) return;
+
+        const newLogoutStr = prompt('Edit Waktu Jam Keluar (YYYY-MM-DDTHH:MM, kosongkan jika belum logout):', logoutFormatted);
+        if (newLogoutStr === null) return;
+
+        const newLoginDate = new Date(newLoginStr);
+        if (isNaN(newLoginDate.getTime())) {
+            return alert('Format jam masuk tidak valid.');
+        }
+
+        att.loginTime = newLoginDate.toISOString();
+        if (newLogoutStr.trim() !== '') {
+            const newLogoutDate = new Date(newLogoutStr);
+            if (!isNaN(newLogoutDate.getTime())) {
+                att.logoutTime = newLogoutDate.toISOString();
+            }
+        } else {
+            att.logoutTime = null;
+        }
+
+        localStorage.setItem('edc_attendances', JSON.stringify(this.attendances));
+        try {
+            if (DB && typeof DB.saveAttendance === 'function') {
+                await DB.saveAttendance(att);
+            }
+        } catch(e) { console.warn('Gagal sync IDB:', e); }
+
+        alert('Data absensi berhasil diperbarui!');
+        this.refreshView();
+    },
+
+    async deleteAbsensi(id) {
+        if (!confirm('Apakah Anda yakin ingin menghapus catatan absensi ini?')) return;
+
+        this.attendances = this.attendances.filter(a => String(a.id || `${a.operatorId}_${a.loginTime}`) !== String(id));
+        localStorage.setItem('edc_attendances', JSON.stringify(this.attendances));
+
+        try {
+            if (DB && typeof DB.deleteAttendance === 'function') {
+                await DB.deleteAttendance(id);
+            }
+        } catch(e) { console.warn('Gagal hapus IDB:', e); }
+
+        alert('Data absensi berhasil dihapus!');
+        this.refreshView();
+    },
+
     renderTabGaji() {
         const opOptions = this.operators.map(op => `<option value="${op.id}" ${String(op.id) === String(this.selectedOperatorId) ? 'selected' : ''}>${op.name}</option>`).join('');
         const currentSalary = this.salaries.find(s => String(s.operatorId) === String(this.selectedOperatorId)) || {
@@ -319,7 +472,6 @@ const KaryawanModule = {
                 </div>
 
                 <form id="form-setting-gaji" style="background:var(--bg-primary); padding:12px; border-radius:10px; border:1px solid var(--border-color);">
-                    <!-- SINKRONISASI FIELD OTOMATIS: HARIAN, MINGGUAN (6 Hari), BULANAN (25 Hari) -->
                     <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:10px;">
                         <div>
                             <label style="font-size:0.7rem; color:var(--text-secondary); font-weight:bold;">Gaji Per Hari (Rp)</label>
@@ -356,7 +508,7 @@ const KaryawanModule = {
     },
 
     // ==========================================
-    // TAB 4: GENERATE SLIP GAJI
+    // TAB 4: GENERATE SLIP GAJI & RESET GAJI
     // ==========================================
     renderTabSlip() {
         const opOptions = this.operators.map(op => `<option value="${op.id}" ${String(op.id) === String(this.selectedOperatorId) ? 'selected' : ''}>${op.name}</option>`).join('');
@@ -385,7 +537,7 @@ const KaryawanModule = {
 
                 <div id="slip-preview-card" style="background:var(--bg-primary); border:1px solid var(--border-color); border-radius:10px; padding:12px; margin-bottom:12px;">
                     <h5 style="margin:0 0 8px 0; font-size:0.85rem; color:var(--accent-color); border-bottom:1px dashed var(--border-color); padding-bottom:6px;">
-                        📌 Rincian Hasil Perhitungan Gaji Otomatis
+                        📌 Rincian Hasil Perhitungan Gaji Otomatis (Belum Dibayar)
                     </h5>
 
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:0.75rem; margin-bottom:8px;">
@@ -413,12 +565,15 @@ const KaryawanModule = {
                     </div>
                 </div>
 
-                <div style="display:flex; gap:8px;">
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
                     <button id="btn-print-slip" class="btn-touch active" style="flex:1; padding:10px; font-size:0.8rem;">
                         🖨️ Cetak Slip Gaji
                     </button>
                     <button id="btn-send-wa-slip" class="btn-touch" style="flex:1; padding:10px; background:#25D366; color:#fff; font-size:0.8rem; font-weight:bold;">
                         📲 Kirim Slip via WA
+                    </button>
+                    <button id="btn-reset-gaji" class="btn-touch" style="flex:100%; margin-top:4px; padding:10px; background:#dc2626; color:#fff; font-size:0.8rem; font-weight:bold;">
+                        ✅ Bayar & Reset Gaji Periode Ini
                     </button>
                 </div>
             </div>
@@ -437,7 +592,8 @@ const KaryawanModule = {
             bonusPercent: 0
         };
 
-        const absensiLogs = this.getProcessedAbsensiLogs().filter(a => String(a.operatorId) === String(operatorId));
+        // HANYA AMBIL ABSENSI YANG BELUM DIBAYAR (isPaid !== true)
+        const absensiLogs = this.getProcessedAbsensiLogs().filter(a => String(a.operatorId) === String(operatorId) && !a.isPaid);
         
         const now = new Date();
         let filteredLogs = [];
@@ -485,6 +641,7 @@ const KaryawanModule = {
             opName,
             opPhone,
             period,
+            filteredLogs,
             totalMinutes,
             ratePerMinute,
             baseSalaryCalculated,
@@ -496,13 +653,46 @@ const KaryawanModule = {
         };
     },
 
-    // ==========================================
-    // ACTION HANDLERS & AUTO SINKRONISASI LOGIC
-    // ==========================================
+    // FITUR RESET GAJI OTOMATIS
+    async payAndResetSalary() {
+        const data = this.calculateAutomatedSalary(this.selectedOperatorId, this.selectedPeriod);
+        if (data.filteredLogs.length === 0 || data.grandTotalSalary === 0) {
+            return alert('Tidak ada akumulasi gaji/absensi belum dibayar yang perlu direset.');
+        }
+
+        if (!confirm(`Tandai LUNAS & Reset Gaji sebesar Rp ${data.grandTotalSalary.toLocaleString('id-ID')} untuk ${data.opName}?`)) {
+            return;
+        }
+
+        const logIdsToPay = new Set(data.filteredLogs.map(l => String(l.id)));
+        const nowIso = new Date().toISOString();
+
+        this.attendances.forEach(att => {
+            const attId = String(att.id || `${att.operatorId}_${att.loginTime}`);
+            if (logIdsToPay.has(attId)) {
+                att.isPaid = true;
+                att.paidAt = nowIso;
+            }
+        });
+
+        localStorage.setItem('edc_attendances', JSON.stringify(this.attendances));
+        try {
+            if (DB && typeof DB.saveAttendance === 'function') {
+                for (let att of this.attendances) {
+                    if (logIdsToPay.has(String(att.id || `${att.operatorId}_${att.loginTime}`))) {
+                        await DB.saveAttendance(att);
+                    }
+                }
+            }
+        } catch(e) { console.warn('Gagal simpan IDB reset gaji:', e); }
+
+        alert(`Gaji ${data.opName} berhasil dibayarkan dan periode direset!`);
+        this.refreshView();
+    },
+
     init() {
         window.KaryawanModule = this;
 
-        // Listener Tab Switch
         document.querySelectorAll('.tab-karyawan-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 this.activeTab = e.currentTarget.getAttribute('data-tab');
@@ -510,7 +700,6 @@ const KaryawanModule = {
             });
         });
 
-        // Form Add Shift
         document.getElementById('form-add-shift')?.addEventListener('submit', (e) => {
             e.preventDefault();
             const operatorId = document.getElementById('shift-operator-id').value;
@@ -536,15 +725,39 @@ const KaryawanModule = {
             this.refreshView();
         });
 
-        // OTOMATIS SINKRONISASI LOGIC (HARIAN, MINGGUAN, BULANAN)
+        // Event listeners untuk Pencarian & Pagination Absensi
+        document.getElementById('search-absensi-name')?.addEventListener('input', (e) => {
+            this.absensiSearchName = e.target.value;
+            this.absensiCurrentPage = 1;
+            this.refreshView();
+        });
+
+        document.getElementById('search-absensi-date')?.addEventListener('change', (e) => {
+            this.absensiSearchDate = e.target.value;
+            this.absensiCurrentPage = 1;
+            this.refreshView();
+        });
+
+        document.getElementById('btn-absensi-prev')?.addEventListener('click', () => {
+            if (this.absensiCurrentPage > 1) {
+                this.absensiCurrentPage--;
+                this.refreshView();
+            }
+        });
+
+        document.getElementById('btn-absensi-next')?.addEventListener('click', () => {
+            this.absensiCurrentPage++;
+            this.refreshView();
+        });
+
         const inDaily = document.getElementById('gaji-daily');
         const inWeekly = document.getElementById('gaji-weekly');
         const inMonthly = document.getElementById('gaji-monthly');
 
         inDaily?.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value) || 0;
-            if (inWeekly) inWeekly.value = Math.round(val * 6);    // 6 Hari Kerja
-            if (inMonthly) inMonthly.value = Math.round(val * 25);  // 25 Hari Kerja
+            if (inWeekly) inWeekly.value = Math.round(val * 6);
+            if (inMonthly) inMonthly.value = Math.round(val * 25);
         });
 
         inWeekly?.addEventListener('input', (e) => {
@@ -561,13 +774,11 @@ const KaryawanModule = {
             if (inWeekly) inWeekly.value = Math.round(daily * 6);
         });
 
-        // Select Operator Gaji
         document.getElementById('select-operator-gaji')?.addEventListener('change', (e) => {
             this.selectedOperatorId = e.target.value;
             this.refreshView();
         });
 
-        // Save Setting Gaji & Bonus
         document.getElementById('form-setting-gaji')?.addEventListener('submit', (e) => {
             e.preventDefault();
             const dailyRate = Number(document.getElementById('gaji-daily').value || 0);
@@ -595,7 +806,6 @@ const KaryawanModule = {
             this.refreshView();
         });
 
-        // Event Slip Gaji
         document.getElementById('slip-operator-id')?.addEventListener('change', (e) => {
             this.selectedOperatorId = e.target.value;
             this.refreshView();
@@ -613,6 +823,10 @@ const KaryawanModule = {
         document.getElementById('btn-send-wa-slip')?.addEventListener('click', () => {
             this.sendWASlipGaji();
         });
+
+        document.getElementById('btn-reset-gaji')?.addEventListener('click', () => {
+            this.payAndResetSalary();
+        });
     },
 
     deleteShift(id) {
@@ -629,6 +843,14 @@ const KaryawanModule = {
     refreshView() {
         if (window.app && typeof window.app.loadModule === 'function') {
             window.app.loadModule('karyawan');
+        } else if (typeof window.loadModule === 'function') {
+            window.loadModule('karyawan');
+        } else {
+            const container = document.getElementById('main-content') || document.getElementById('app') || document.body;
+            this.render().then(html => {
+                if (container) container.innerHTML = html;
+                this.init();
+            });
         }
     },
 
