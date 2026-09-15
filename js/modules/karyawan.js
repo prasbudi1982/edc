@@ -79,9 +79,27 @@ const KaryawanModule = {
         } catch(e) { console.warn('session parse error', e); }
 
         // FIX: Merge dengan benar, prioritaskan logoutTime terbaru
+        // FIX BUG: Operator selain kasir/admin tidak terbaca karena field id berbeda
+        const getNormalizedOpId = (a) => {
+            if (!a) return null;
+            return a.operatorId || a.operator_id || a.karyawanId || a.karyawan_id || a.userId || a.user_id || a.id_karyawan || a.karyawanID || a.operator?.id || a.operator?.operatorId || a.opId || null;
+        };
         const attendanceMap = new Map();
         [...lsAttendances, ...idbAttendances, ...sessionAttendances].forEach(att => {
-            if (!att || !att.operatorId) return;
+            if (!att) return;
+            // Normalisasi operatorId agar semua role terbaca (kasir, admin, BOSS, staff, operator, dll)
+            let normOpId = getNormalizedOpId(att);
+            // Fallback: coba cari dari operatorName jika id tidak ada
+            if (!normOpId && att.operatorName) {
+                const foundOp = (this.operators || []).find(o => o.name && att.operatorName && o.name.toLowerCase() === att.operatorName.toLowerCase());
+                if (foundOp) normOpId = foundOp.id;
+            }
+            if (!normOpId) return;
+            // Set field standar agar downstream konsisten
+            att.operatorId = String(normOpId);
+            // Normalisasi loginTime/logoutTime field alternatif
+            if (!att.loginTime) att.loginTime = att.login_time || att.waktuMasuk || att.jamMasuk || att.timestamp || att.createdAt;
+            if (!att.logoutTime) att.logoutTime = att.logout_time || att.waktuKeluar || att.jamKeluar || null;
             const key = att.id || `${att.operatorId}_${att.loginTime}`;
             if (!attendanceMap.has(key)) {
                 attendanceMap.set(key, att);
@@ -276,7 +294,10 @@ const KaryawanModule = {
     getProcessedAbsensiLogs() {
         const rawAttendances = this.attendances || [];
         return rawAttendances.map(att => {
-            const op = this.operators.find(o => String(o.id) === String(att.operatorId));
+            // Normalisasi ulang untuk jaga-jaga data lama
+            const normId = att.operatorId || att.operator_id || att.karyawanId || att.userId || att.operator?.id;
+            if (normId) att.operatorId = String(normId);
+            const op = this.operators.find(o => String(o.id) === String(att.operatorId)) || this.operators.find(o => o.name && att.operatorName && o.name.toLowerCase() === att.operatorName.toLowerCase());
             const opName = op ? op.name : (att.operatorName || 'Operator');
             let rawLoginDate = new Date(att.loginTime);
             let rawLogoutDate = att.logoutTime ? new Date(att.logoutTime) : null;
