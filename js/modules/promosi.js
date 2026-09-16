@@ -1,4 +1,5 @@
 import DB from './db.js';
+import AI from './ai.js'; // <-- MODUL AI BARU
 
 if (!window._promosiState) {
     window._promosiState = {
@@ -7,8 +8,12 @@ if (!window._promosiState) {
         promoCurrentPage: 1,
         promoPerPage: 10,
         autoScanMode: 'default', // default = 20, custom = unlimited/custom
-        autoScanLimit: 20,
-        autoScanCustomLimit: null
+        autoScanCustomLimit: null,
+        activeTab: 'auto',
+        aiSuggestions: [],
+        aiIsLoading: false,
+        aiLastScan: null,
+        aiSummary: null
     };
 }
 // Pastikan property pagination & scan limit ada untuk state lama
@@ -17,6 +22,10 @@ if (window._promosiState) {
     if (window._promosiState.promoPerPage == null) window._promosiState.promoPerPage = 10;
     if (window._promosiState.autoScanMode == null) window._promosiState.autoScanMode = 'default';
     if (window._promosiState.autoScanLimit == null) window._promosiState.autoScanLimit = 20;
+    if (window._promosiState.activeTab == null) window._promosiState.activeTab = 'auto';
+    if (window._promosiState.aiSuggestions == null) window._promosiState.aiSuggestions = [];
+    if (window._promosiState.aiIsLoading == null) window._promosiState.aiIsLoading = false;
+    if (window._promosiState.aiLastScan == null) window._promosiState.aiLastScan = null;
 }
 
 const PromosiModule = {
@@ -75,7 +84,14 @@ const PromosiModule = {
                 </div>
 
 
-                <!-- ================= AUTO DETECT - SELARAS TEMA EDC ================= -->
+                <!-- ===== TAB NAVIGATION - AI MODULE (TAMBAHAN, TIDAK UBAH FUNGSI LAIN) ===== -->
+                <div style="display:flex; gap:8px; background:var(--bg-secondary); padding:4px; border-radius:12px; border:1px solid var(--border-color); margin-bottom:10px;">
+                  <button onclick="window.PromosiModule && window.PromosiModule.handleTabSwitch && window.PromosiModule.handleTabSwitch('auto')" data-tab="auto" class="promo-tab-btn" id="tab-btn-auto" style="flex:1; padding:8px; border-radius:8px; font-size:0.75rem; font-weight:600; border:none; cursor:pointer; background:${window._promosiState.activeTab==='auto'?'var(--accent-color)':'transparent'}; color:${window._promosiState.activeTab==='auto'?'white':'var(--text-secondary)'};">📊 Auto Detect ${pendingCount?`(${pendingCount})`:''}</button>
+                  <button onclick="window.PromosiModule && window.PromosiModule.handleTabSwitch && window.PromosiModule.handleTabSwitch('ai')" data-tab="ai" class="promo-tab-btn" id="tab-btn-ai" style="flex:1; padding:8px; border-radius:8px; font-size:0.75rem; font-weight:700; border:none; cursor:pointer; background:${window._promosiState.activeTab==='ai'?'linear-gradient(135deg,#8b5cf6,#ec4899)':'transparent'}; color:${window._promosiState.activeTab==='ai'?'white':'var(--text-secondary)'};">✨ AI Engine ${window._promosiState.aiSuggestions?.length?`(${window._promosiState.aiSuggestions.length})`:''}</button>
+                </div>
+
+                <div id="tab-auto-wrapper" style="display:${window._promosiState.activeTab==='auto'?'block':'none'};">
+                <!-- ================= AUTO DETECT - SELARAS TEMA EDC (ORIGINAL, TIDAK DIUBAH) ================= -->
                 <div class="setting-card" style="border:1px solid var(--border-color); border-left:3px solid var(--accent-color); padding:10px; background:var(--bg-secondary);">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
                         <div style="flex:1; min-width:0;">
@@ -157,8 +173,16 @@ const PromosiModule = {
                     </div>
                 </div>
 
-                <!-- Daftar Promo - dengan Pagination 10/page -->
+                </div> <!-- end tab-auto-wrapper - FIX: daftar promo di luar tab -->
+
+                <!-- ===== TAB AI WRAPPER - FIX: biar AI Engine tidak kosong ===== -->
+                <div id="tab-ai-wrapper" style="display:${window._promosiState.activeTab==='ai'?'block':'none'};">
+                    <div id="ai-premium-container"></div>
+                </div>
+
+                <!-- Daftar Promo - dengan Pagination 10/page - FIX: tampil di semua tab, sebelum ada promo sistem pun -->
                 <div class="setting-card" style="padding:10px;">
+                <div class="setting-card" id="promo-list-card" style="padding:10px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                         <h4 style="margin:0; font-size:0.8rem; color:var(--text-primary);">Daftar Promo Berjalan</h4>
                         <div style="display:flex; gap:4px; align-items:center;">
@@ -167,6 +191,7 @@ const PromosiModule = {
                         </div>
                     </div>
                     
+                    <div id="promo-list-container">
                     ${promotionsForRender.length ? `
                         <div style="display:flex; flex-direction:column; gap:6px;">
                         ${paginatedPromos.map(p => `
@@ -200,6 +225,7 @@ const PromosiModule = {
                             Belum ada promo aktif<br><small style="font-size:0.65rem;">Buat manual atau scan auto detect</small>
                         </div>
                     `}
+                    </div>
                 </div>
             </div>
         `;
@@ -324,6 +350,20 @@ const PromosiModule = {
         });
 
         this.initAutoButtons();
+
+        // ===== AI TAB - TAMBAHAN (TIDAK MERUBAH FUNGSI LAIN) =====
+        document.querySelectorAll('[data-tab]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const tab = e.currentTarget.getAttribute('data-tab');
+                this.handleTabSwitch(tab);
+            });
+        });
+        // Pastikan AI container ada dan render
+        setTimeout(() => {
+            if (document.getElementById('ai-premium-container')) {
+                this.updateAIPremiumContainer();
+            }
+        }, 200);
     },
 
     initAutoButtons() {
@@ -1226,12 +1266,327 @@ const PromosiModule = {
 
     async onLaporanUpdated() {
         await this.analyzeLaporanData({ silent: true });
-        // Auto cleanup setiap kali laporan di-update
         const cleanup = await this.autoCleanupExpiredPromos();
         if (cleanup.deletedCount > 0 && !document.hidden) {
             console.log(`🧹 Auto cleanup: ${cleanup.deletedCount} promo tidak relevan dihapus`);
         }
-    }
+    },
+
+
+    // ===== AI MODULE - TAMBAHAN (TIDAK MERUBAH FUNGSI LAIN) =====
+    handleTabSwitch(tab) {
+        window._promosiState.activeTab = tab;
+        const autoWrapper = document.getElementById('tab-auto-wrapper');
+        const aiWrapper = document.getElementById('tab-ai-wrapper');
+        const btnAuto = document.getElementById('tab-btn-auto');
+        const btnAi = document.getElementById('tab-btn-ai');
+        if (autoWrapper) autoWrapper.style.display = tab === 'auto' ? 'block' : 'none';
+        if (aiWrapper) aiWrapper.style.display = tab === 'ai' ? 'block' : 'none';
+        if (btnAuto) {
+            btnAuto.style.background = tab === 'auto' ? 'var(--accent-color)' : 'transparent';
+            btnAuto.style.color = tab === 'auto' ? 'white' : 'var(--text-secondary)';
+        }
+        if (btnAi) {
+            btnAi.style.background = tab === 'ai' ? 'linear-gradient(135deg,#8b5cf6,#ec4899)' : 'transparent';
+            btnAi.style.color = tab === 'ai' ? 'white' : 'var(--text-secondary)';
+        }
+        if (tab === 'ai') this.updateAIPremiumContainer();
+    },
+
+    renderAIContent() {
+        const isLoading = window._promosiState.aiIsLoading;
+        const suggestions = window._promosiState.aiSuggestions || [];
+        const lastScan = window._promosiState.aiLastScan;
+        const summary = window._promosiState.aiSummary;
+        const isFree = (() => {
+            const edc = localStorage.getItem('edc_premium_free_mode');
+            const promosi = localStorage.getItem('promosi_premium_free_mode');
+            if (edc === null && promosi === null) return true;
+            return (edc !== 'false' && promosi !== 'false');
+        })();
+        const badgeText = isFree ? "FREE BETA" : "PREMIUM";
+        const badgeColor = isFree ? "#10b981" : "#8b5cf6";
+        return `
+          <div class="setting-card" style="border:1px solid #8b5cf6; border-left:3px solid #8b5cf6; padding:12px; background:linear-gradient(135deg, rgba(139,92,246,0.08), rgba(236,72,153,0.05)); border-radius:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <div style="display:flex; gap:6px; align-items:center;">
+                  <span style="font-size:0.85rem; font-weight:800; background:linear-gradient(135deg,#8b5cf6,#ec4899); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">AI Engine</span>
+                  <span style="font-size:0.55rem; padding:2px 6px; border-radius:20px; background:${badgeColor}; color:white;">${badgeText}</span>
+                </div>
+                <div style="font-size:0.65rem; color:var(--text-secondary); margin-top:2px;">${lastScan ? `Last: ${new Date(lastScan).toLocaleString('id-ID')}` : 'Powered by AI Module • ' + (this.products?.length||0) + ' produk'}</div>
+              </div>
+              <button onclick="window.PromosiModule && window.PromosiModule.handleAIScan && window.PromosiModule.handleAIScan()" id="btn-ai-scan" style="padding:8px 14px; font-size:0.7rem; font-weight:700; background:linear-gradient(135deg,#8b5cf6,#ec4899); color:white; border:none; border-radius:10px; cursor:pointer;" ${isLoading ? 'disabled' : ''}>${isLoading ? '🤖 Mikir...' : '✨ Scan AI'}</button>
+            </div>
+            ${summary ? `
+            <div style="margin-top:10px; padding:8px; background:var(--bg-secondary); border-radius:8px; border:1px solid var(--border-color);">
+              <div style="font-size:0.65rem; font-weight:700; margin-bottom:4px;">📦 Data Real untuk AI:</div>
+              <div style="font-size:0.6rem; color:var(--text-secondary); display:grid; grid-template-columns:1fr 1fr; gap:4px;">
+                <div>Total: <b>${summary.totalProducts}</b></div>
+                <div>Low Stock: <b>${summary.lowStock?.length||0}</b></div>
+                <div>Best Seller: <b>${summary.bestSellers?.length||0}</b></div>
+                <div>Dead Stock: <b>${summary.deadStock?.length||0}</b></div>
+              </div>
+            </div>` : ''}
+            <div style="display:flex; gap:6px; margin-top:10px;">
+              <select id="ai-goal" style="flex:1; padding:6px; border-radius:8px; border:1px solid var(--border-color); font-size:0.7rem; background:var(--bg-primary);">
+                <option value="profit">🎯 Fokus: Profit Maksimal</option>
+                <option value="clear_stock">📦 Fokus: Habiskan Stok Mati</option>
+                <option value="basket">🛒 Fokus: Naikkan Basket Size</option>
+                <option value="new_customer">👥 Fokus: Tarik Pelanggan Baru</option>
+                <option value="weekend_sale">🎉 Trigger: Weekend Sale</option>
+                <option value="payday">💰 Trigger: Payday / Gajian</option>
+                <option value="flash_sale">⚡ Trigger: Flash Sale 2 Jam</option>
+                <option value="bundle_hemat">📦 Trigger: Bundle Hemat (Retail Modern)</option>
+                <option value="tebus_murah">🏷️ Trigger: Tebus Murah Min Belanja</option>
+                <option value="member_exclusive">⭐ Trigger: Member Exclusive</option>
+                <option value="clearance">🧹 Trigger: Clearance / Cuci Gudang</option>
+                <option value="back_to_school">🎒 Trigger: Back to School</option>
+                <option value="seasonal">🌙 Trigger: Musiman / Lebaran / Nataru</option>
+              </select>
+            </div>
+            <div id="ai-suggestions-list" style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
+              ${isLoading ? `<div style="text-align:center; padding:24px;"><div style="width:24px; height:24px; border:3px solid #8b5cf6; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; margin:0 auto;"></div><div style="font-size:0.7rem; color:var(--text-secondary); margin-top:8px;">AI analisa ${this.products?.length||0} produk...</div></div>` : suggestions.length ? suggestions.map((s,i)=>`
+                <div style="padding:12px; background:var(--bg-card); border-radius:12px; border:1px solid var(--border-color); border-left:3px solid ${s.urgency==='high'?'#ef4444':'#8b5cf6'};">
+                  <div style="display:flex; justify-content:space-between; gap:8px;"><div style="font-size:0.75rem; font-weight:700;">${s.title}</div><span style="font-size:0.55rem; padding:2px 6px; border-radius:10px; background:#f3e8ff; color:#7c3aed;">${s.type}</span></div>
+                  <div style="font-size:0.65rem; color:var(--text-secondary); margin-top:4px;">${s.reason}</div>
+                  ${s.predicted_lift?`<div style="font-size:0.6rem; margin-top:6px; padding:4px 8px; background:rgba(34,197,94,0.1); border-radius:6px; color:#16a34a; font-weight:600;">📈 ${s.predicted_lift}</div>`:''}
+                  ${s.copywriting?`<div style="font-size:0.6rem; margin-top:6px; padding:8px; background:var(--bg-secondary); border-radius:8px; border:1px dashed var(--border-color);"><b>Copy WA:</b><br>${s.copywriting}</div>`:''}
+                  <div style="display:flex; gap:6px; margin-top:8px;"><button data-approve-ai="${i}" style="flex:1; padding:6px; border-radius:8px; border:none; background:var(--accent-color); color:white; font-size:0.65rem; font-weight:600; cursor:pointer;">✅ Pakai Promo</button><button data-copy-ai="${i}" style="padding:6px 10px; border-radius:8px; border:1px solid var(--border-color); background:var(--bg-secondary); font-size:0.65rem; cursor:pointer;">📋 Copy</button></div>
+                </div>
+              `).join('') : `<div style="text-align:center; padding:24px; color:var(--text-secondary); font-size:0.75rem; border:1px dashed var(--border-color); border-radius:12px; background:var(--bg-secondary);"><div style="font-size:2rem; margin-bottom:8px;">🤖</div><div style="font-weight:600; margin-bottom:4px;">AI Engine Siap</div><div>Klik <b>✨ Scan AI</b> untuk analisa ${this.products?.length||0} produk</div></div>`}
+            </div>
+          </div>
+          <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+        `;
+    },
+
+    renderPremiumPaywall() {
+        return `<div style="border:2px dashed #8b5cf6; border-radius:16px; padding:24px 16px; background:linear-gradient(135deg, rgba(139,92,246,0.1), rgba(236,72,153,0.1)); text-align:center;"><div style="font-size:2rem;">🔒✨</div><div style="font-weight:800;">AI Terkunci</div><div style="font-size:0.7rem; color:var(--text-secondary); margin:8px 0;">Aktifkan di Setting > Premium</div><button id="btn-go-setting" style="width:100%; padding:10px; border-radius:10px; border:none; background:linear-gradient(135deg,#8b5cf6,#ec4899); color:white; font-weight:700;">Buka Setting</button></div>`;
+    },
+
+    updateAIPremiumContainer() {
+        console.log('updateAIPremiumContainer called - activeTab:', window._promosiState.activeTab);
+        let container = document.getElementById('ai-premium-container');
+        let wrapper = document.getElementById('tab-ai-wrapper');
+        if (!wrapper) {
+            console.warn('tab-ai-wrapper not found, create');
+            const appContent = document.getElementById('app-content');
+            wrapper = document.createElement('div');
+            wrapper.id = 'tab-ai-wrapper';
+            wrapper.style.display = window._promosiState.activeTab === 'ai' ? 'block' : 'none';
+            if (appContent) appContent.appendChild(wrapper);
+        }
+        if (!container) {
+            console.warn('ai-premium-container not found, create');
+            container = document.createElement('div');
+            container.id = 'ai-premium-container';
+            wrapper.appendChild(container);
+        }
+        const isFree = (() => {
+            const edc = localStorage.getItem('edc_premium_free_mode');
+            const promosi = localStorage.getItem('promosi_premium_free_mode');
+            if (edc === null && promosi === null) return true;
+            return (edc !== 'false' && promosi !== 'false');
+        })();
+        const isPremium = true; // FORCE FREE BETA agar halaman AI tidak kosong
+        if (!isPremium) {
+            container.innerHTML = this.renderPremiumPaywall();
+            document.getElementById('btn-go-setting')?.addEventListener('click', () => {
+                if (window.app) { window.app.setActiveNav('setting'); window.app.loadModule('setting'); }
+            });
+            return;
+        }
+        container.innerHTML = this.renderAIContent();
+        document.getElementById('btn-ai-scan')?.addEventListener('click', () => this.handleAIScan());
+        document.querySelectorAll('[data-approve-ai]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const idx = Number(e.currentTarget.getAttribute('data-approve-ai'));
+                const sug = window._promosiState.aiSuggestions[idx];
+                if (sug && confirm(`Pakai promo "${sug.title}"?`)) await this.approveAISuggestion(sug);
+            });
+        });
+        document.querySelectorAll('[data-copy-ai]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const idx = Number(e.currentTarget.getAttribute('data-copy-ai'));
+                const sug = window._promosiState.aiSuggestions[idx];
+                navigator.clipboard.writeText(sug.copywriting || sug.title || '');
+                alert('Copy berhasil!');
+            });
+        });
+    },
+
+    async handleAIScan() {
+        if (window._promosiState.aiIsLoading) return;
+        const goal = document.getElementById('ai-goal')?.value || 'profit';
+        window._promosiState.aiIsLoading = true;
+        this.updateAIPremiumContainer();
+        try {
+            const result = await AI.generatePromosi({ goal });
+            window._promosiState.aiSuggestions = result.strategies || [];
+            window._promosiState.aiSummary = result.summary;
+            window._promosiState.aiLastScan = new Date().toISOString();
+            window._promosiState.aiIsLoading = false;
+            this.updateAIPremiumContainer();
+        } catch (e) {
+            window._promosiState.aiIsLoading = false;
+            alert("Gagal AI Scan: " + e.message);
+            this.updateAIPremiumContainer();
+        }
+    },
+
+    async approveAISuggestion(sug) {
+        // VALIDASI & KONVERSI ke format yang dibaca transaksi.js
+        // transaksi.js baca: promo.type dan promo.config (targetProdId, prodA, prodB, buyProdId, getProdId, discount, bundlePrice, discountPrice)
+        const products = await DB.getProducts() || [];
+        const findProd = (id) => products.find(p => String(p.id||p.docId) === String(id));
+        
+        // Pastikan product ID valid
+        const targetIds = sug.target_product_ids || [];
+        if (targetIds.length === 0) {
+            alert('AI ngasih ID produk ngawur (tidak ada di database). Coba Scan lagi.');
+            return;
+        }
+
+        // Normalisasi config sesuai type agar transaksi bisa baca
+        let finalConfig = { ...sug.config };
+        const type = sug.type;
+
+        // Fix config berdasarkan type - SAMAKAN DENGAN FORMAT AUTO DETECT
+        if (type === 'discount' || type === 'weekend') {
+            // Butuh prodId + discount
+            const prodId = finalConfig.prodId || finalConfig.targetProdId || targetIds[0];
+            const prod = findProd(prodId);
+            if (!prod) { alert('Produk tidak ditemukan: '+prodId); return; }
+            finalConfig.prodId = String(prodId);
+            finalConfig.targetProdId = String(prodId);
+            finalConfig.discount = Number(finalConfig.discount) || Math.floor(this.getProductPrice(prod) * 0.15);
+            // Pastikan untung min 5%
+            const cost = this.getProductCost(prod);
+            const price = this.getProductPrice(prod);
+            if (price - finalConfig.discount < cost * 1.05) {
+                finalConfig.discount = Math.floor(price - cost * 1.05);
+                if (finalConfig.discount <= 0) {
+                    alert(`Margin ${prod.name} terlalu tipis, tidak bisa diskon. Harga ${price}, modal ${cost}`);
+                    return;
+                }
+            }
+        } else if (type === 'tebus_murah') {
+            const prodId = finalConfig.targetProdId || targetIds[0];
+            const prod = findProd(prodId);
+            if (!prod) { alert('Produk tidak ditemukan: '+prodId); return; }
+            finalConfig.targetProdId = String(prodId);
+            finalConfig.discountPrice = Number(finalConfig.discountPrice) || Math.ceil(this.getProductCost(prod) * 1.15);
+            finalConfig.minSpend = Number(finalConfig.minSpend) || 50000;
+        } else if (type === 'bundling') {
+            const prodAId = finalConfig.prodA || targetIds[0];
+            const prodBId = finalConfig.prodB || targetIds[1] || targetIds[0];
+            const prodA = findProd(prodAId);
+            const prodB = findProd(prodBId);
+            if (!prodA || !prodB) { alert('Produk bundling tidak ditemukan'); return; }
+            finalConfig.prodA = String(prodAId);
+            finalConfig.prodB = String(prodBId);
+            const costTotal = this.getProductCost(prodA) + this.getProductCost(prodB);
+            finalConfig.bundlePrice = Number(finalConfig.bundlePrice) || Math.ceil(costTotal * 1.25);
+        } else if (type === 'buyXgetY' || type === 'buy_x_get_y') {
+            const buyId = finalConfig.buyProdId || targetIds[0];
+            const getId = finalConfig.getProdId || targetIds[1] || targetIds[0];
+            const buyProd = findProd(buyId);
+            const getProd = findProd(getId);
+            if (!buyProd || !getProd) { alert('Produk BOGO tidak ditemukan'); return; }
+            finalConfig.buyProdId = String(buyId);
+            finalConfig.getProdId = String(getId);
+            finalConfig.buyQty = Number(finalConfig.buyQty) || 2;
+            finalConfig.getQty = Number(finalConfig.getQty) || 1;
+        }
+
+        const promoData = {
+            name: sug.title,
+            type: type,
+            config: finalConfig,
+            reason: sug.reason + ` | Stok real & penjualan real`,
+            copywriting: sug.copywriting,
+            predicted_lift: sug.predicted_lift,
+            urgency: sug.urgency,
+            source: 'ai_engine',
+            autoGenerated: true, // SET TRUE BIAR TRANSAKSI BACA (sama kayak auto detect)
+            autoRule: 'AI_' + (sug.type || '').toUpperCase(),
+            autoReason: sug.reason,
+            status: 'active',
+            isAI: true,
+            isPremium: true,
+            createdAt: new Date().toISOString(),
+            expiryAt: new Date(Date.now() + 30*24*60*60*1000).toISOString(),
+            detectionPeriod: this.detectionPeriod || 'weekly',
+            periodLabel: this.getPeriodConfig ? this.getPeriodConfig().label : '7 hari'
+        };
+
+        console.log('Approve AI promo (format transaksi):', promoData);
+
+        try { 
+            await DB.savePromotion(promoData); 
+            this.promotions = await DB.getPromotions() || []; 
+            // FIX: list promo AI harus tampil walau promo sistem masih kosong
+            window._promosiState.aiSuggestions = (window._promosiState.aiSuggestions||[]).filter(x => x.title !== sug.title);
+            window._promosiState.activeTab = 'ai';
+            alert(`✅ Promo "${sug.title}" berhasil dibuat!`); 
+            // Update AI container
+            this.updateAIPremiumContainer();
+            // FIX: refresh daftar promo berjalan tanpa reload full (biar AI promo langsung tampil)
+            try {
+                const promoContainer = document.getElementById('promo-list-container');
+                if (promoContainer) {
+                    // Render ulang list promo
+                    const perPage = window._promosiState.promoPerPage || 10;
+                    const promotionsForRender = (() => {
+                        const dedupMap = new Map();
+                        const deduped = [];
+                        (this.promotions||[]).forEach(p=>{
+                            const c=p.config||{};
+                            const key=`${p.type}:${c.targetProdId||c.prodA||c.prodId||c.buyProdId||''}:${c.prodB||c.getProdId||''}`;
+                            if(!dedupMap.has(key)){ dedupMap.set(key,true); deduped.push(p); }
+                        });
+                        return deduped;
+                    })();
+                    if (promotionsForRender.length === 0) {
+                        promoContainer.innerHTML = `<div style="text-align:center; padding:16px; border:1px dashed var(--border-color); border-radius:8px; color:var(--text-secondary); font-size:0.75rem;">Belum ada promo aktif<br><small>Buat manual atau scan auto detect</small></div>`;
+                    } else {
+                        const paginated = promotionsForRender.slice(0, perPage);
+                        promoContainer.innerHTML = `
+                        <div style="display:flex; flex-direction:column; gap:6px;">
+                        ${paginated.map(p => `
+                            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:8px; display:flex; justify-content:space-between; gap:8px;">
+                                <div style="flex:1; min-width:0;">
+                                    <div style="display:flex; gap:5px; align-items:center; flex-wrap:wrap;">
+                                        <b style="font-size:0.8rem; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px;">${p.name}</b>
+                                        ${p.isAI ? `<span style="font-size:0.55rem; background:linear-gradient(135deg,#8b5cf6,#ec4899); color:white; padding:1px 5px; border-radius:10px;">AI</span>` : ''}
+                                        ${p.autoGenerated ? `<span style="font-size:0.55rem; background:rgba(37,99,235,0.15); color:var(--accent-color); border:1px solid rgba(37,99,235,0.3); padding:1px 5px; border-radius:10px;">AUTO</span>` : ''}
+                                        <span style="font-size:0.55rem; background:var(--bg-primary); color:var(--text-secondary); padding:1px 5px; border-radius:10px; border:1px solid var(--border-color);">${(p.type||'').toUpperCase().replace(/_/g,' ')}</span>
+                                    </div>
+                                    <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:3px; line-height:1.2;">${this.getPromoDescription ? this.getPromoDescription(p) : (p.reason||'')}</div>
+                                    ${p.autoReason ? `<div style="font-size:0.65rem; color:var(--accent-color); margin-top:2px; opacity:0.9;">↳ ${p.autoReason}</div>` : ''}
+                                </div>
+                                <button onclick="PromosiModule.deletePromo('${p.id}')" style="background:none; border:1px solid var(--border-color); color:var(--danger-color); border-radius:6px; padding:4px 8px; font-size:0.65rem; height:fit-content; cursor:pointer;">Hapus</button>
+                            </div>
+                        `).join('')}
+                        </div>`;
+                    }
+                }
+            } catch(e) { console.warn('Gagal refresh promo list:', e); }
+            // Update badge count promo aktif
+            try {
+                const badge = document.querySelector('[id^="promo-count"]') || document.querySelector('span');
+                // tidak critical
+            } catch(e) {}
+            
+            // optional: tidak reload full, biar user tetap di AI
+        } catch(e){ 
+            console.error(e);
+            alert("Gagal: "+e.message); 
+        }
+    },
+
+
 };
 
 export default PromosiModule;
