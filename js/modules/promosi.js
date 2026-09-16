@@ -10,6 +10,8 @@ if (!window._promosiState) {
         autoScanMode: 'default', // default = 20, custom = unlimited/custom
         autoScanCustomLimit: null,
         activeTab: 'auto',
+        aiCurrentPage: 1,
+        aiPerPage: 10,
         aiSuggestions: [],
         aiIsLoading: false,
         aiLastScan: null,
@@ -23,6 +25,8 @@ if (window._promosiState) {
     if (window._promosiState.autoScanMode == null) window._promosiState.autoScanMode = 'default';
     if (window._promosiState.autoScanLimit == null) window._promosiState.autoScanLimit = 20;
     if (window._promosiState.activeTab == null) window._promosiState.activeTab = 'auto';
+    if (window._promosiState.aiCurrentPage == null) window._promosiState.aiCurrentPage = 1;
+    if (window._promosiState.aiPerPage == null) window._promosiState.aiPerPage = 10;
     if (window._promosiState.aiSuggestions == null) window._promosiState.aiSuggestions = [];
     if (window._promosiState.aiIsLoading == null) window._promosiState.aiIsLoading = false;
     if (window._promosiState.aiLastScan == null) window._promosiState.aiLastScan = null;
@@ -1295,9 +1299,18 @@ const PromosiModule = {
 
     renderAIContent() {
         const isLoading = window._promosiState.aiIsLoading;
-        const suggestions = window._promosiState.aiSuggestions || [];
+        const allSuggestions = window._promosiState.aiSuggestions || [];
+        const perPage = window._promosiState.aiPerPage || 10;
+        let currentPage = window._promosiState.aiCurrentPage || 1;
+        const totalPages = Math.max(1, Math.ceil(allSuggestions.length / perPage));
+        if (currentPage > totalPages) currentPage = totalPages;
+        if (currentPage < 1) currentPage = 1;
+        window._promosiState.aiCurrentPage = currentPage;
+        const startIdx = (currentPage - 1) * perPage;
+        const suggestions = allSuggestions.slice(startIdx, startIdx + perPage);
         const lastScan = window._promosiState.aiLastScan;
         const summary = window._promosiState.aiSummary;
+        const totalCount = allSuggestions.length;
         const isFree = (() => {
             const edc = localStorage.getItem('edc_premium_free_mode');
             const promosi = localStorage.getItem('promosi_premium_free_mode');
@@ -1334,28 +1347,42 @@ const PromosiModule = {
                 <option value="clear_stock">📦 Fokus: Habiskan Stok Mati</option>
                 <option value="basket">🛒 Fokus: Naikkan Basket Size</option>
                 <option value="new_customer">👥 Fokus: Tarik Pelanggan Baru</option>
-                <option value="weekend_sale">🎉 Trigger: Weekend Sale</option>
-                <option value="payday">💰 Trigger: Payday / Gajian</option>
-                <option value="flash_sale">⚡ Trigger: Flash Sale 2 Jam</option>
-                <option value="bundle_hemat">📦 Trigger: Bundle Hemat (Retail Modern)</option>
-                <option value="tebus_murah">🏷️ Trigger: Tebus Murah Min Belanja</option>
-                <option value="member_exclusive">⭐ Trigger: Member Exclusive</option>
-                <option value="clearance">🧹 Trigger: Clearance / Cuci Gudang</option>
-                <option value="back_to_school">🎒 Trigger: Back to School</option>
-                <option value="seasonal">🌙 Trigger: Musiman / Lebaran / Nataru</option>
+                <option value="weekend_sale">🎉 Fokus: Weekend Sale</option>
+                <option value="payday">💰 Fokus: Payday / Gajian</option>
+                <option value="flash_sale">⚡ Fokus: Flash Sale 2 Jam</option>
+                <option value="bundle_hemat">📦 Fokus: Bundle Hemat (Retail Modern)</option>
+                <option value="tebus_murah">🏷️ Fokus: Tebus Murah Min Belanja</option>
+                <option value="member_exclusive">⭐ Fokus: Member Exclusive</option>
+                <option value="clearance">🧹 Fokus: Clearance / Cuci Gudang</option>
+                <option value="back_to_school">🎒 Fokus: Back to School</option>
+                <option value="seasonal">🌙 Fokus: Musiman / Lebaran / Nataru</option>
               </select>
             </div>
             <div id="ai-suggestions-list" style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
-              ${isLoading ? `<div style="text-align:center; padding:24px;"><div style="width:24px; height:24px; border:3px solid #8b5cf6; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; margin:0 auto;"></div><div style="font-size:0.7rem; color:var(--text-secondary); margin-top:8px;">AI analisa ${this.products?.length||0} produk...</div></div>` : suggestions.length ? suggestions.map((s,i)=>`
+              ${isLoading ? `<div style="text-align:center; padding:24px;"><div style="width:24px; height:24px; border:3px solid #8b5cf6; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; margin:0 auto;"></div><div style="font-size:0.7rem; color:var(--text-secondary); margin-top:8px;">AI analisa ${this.products?.length||0} produk...</div></div>` : suggestions.length ? suggestions.map((s,i)=>{
+                const realIdx = startIdx + i;
+                return `
                 <div style="padding:12px; background:var(--bg-card); border-radius:12px; border:1px solid var(--border-color); border-left:3px solid ${s.urgency==='high'?'#ef4444':'#8b5cf6'};">
                   <div style="display:flex; justify-content:space-between; gap:8px;"><div style="font-size:0.75rem; font-weight:700;">${s.title}</div><span style="font-size:0.55rem; padding:2px 6px; border-radius:10px; background:#f3e8ff; color:#7c3aed;">${s.type}</span></div>
                   <div style="font-size:0.65rem; color:var(--text-secondary); margin-top:4px;">${s.reason}</div>
                   ${s.predicted_lift?`<div style="font-size:0.6rem; margin-top:6px; padding:4px 8px; background:rgba(34,197,94,0.1); border-radius:6px; color:#16a34a; font-weight:600;">📈 ${s.predicted_lift}</div>`:''}
                   ${s.copywriting?`<div style="font-size:0.6rem; margin-top:6px; padding:8px; background:var(--bg-secondary); border-radius:8px; border:1px dashed var(--border-color);"><b>Copy WA:</b><br>${s.copywriting}</div>`:''}
-                  <div style="display:flex; gap:6px; margin-top:8px;"><button data-approve-ai="${i}" style="flex:1; padding:6px; border-radius:8px; border:none; background:var(--accent-color); color:white; font-size:0.65rem; font-weight:600; cursor:pointer;">✅ Pakai Promo</button><button data-copy-ai="${i}" style="padding:6px 10px; border-radius:8px; border:1px solid var(--border-color); background:var(--bg-secondary); font-size:0.65rem; cursor:pointer;">📋 Copy</button></div>
+                  <div style="display:flex; gap:6px; margin-top:8px;"><button data-approve-ai="${realIdx}" style="flex:1; padding:6px; border-radius:8px; border:none; background:var(--accent-color); color:white; font-size:0.65rem; font-weight:600; cursor:pointer;">✅ Pakai Promo</button><button data-copy-ai="${realIdx}" style="padding:6px 10px; border-radius:8px; border:1px solid var(--border-color); background:var(--bg-secondary); font-size:0.65rem; cursor:pointer;">📋 Copy</button></div>
                 </div>
-              `).join('') : `<div style="text-align:center; padding:24px; color:var(--text-secondary); font-size:0.75rem; border:1px dashed var(--border-color); border-radius:12px; background:var(--bg-secondary);"><div style="font-size:2rem; margin-bottom:8px;">🤖</div><div style="font-weight:600; margin-bottom:4px;">AI Engine Siap</div><div>Klik <b>✨ Scan AI</b> untuk analisa ${this.products?.length||0} produk</div></div>`}
+              `}).join('') : `<div style="text-align:center; padding:24px; color:var(--text-secondary); font-size:0.75rem; border:1px dashed var(--border-color); border-radius:12px; background:var(--bg-secondary);"><div style="font-size:2rem; margin-bottom:8px;">🤖</div><div style="font-weight:600; margin-bottom:4px;">AI Engine Siap</div><div>Klik <b>✨ Scan AI</b> untuk analisa ${this.products?.length||0} produk</div></div>`}
             </div>
+            ${!isLoading && totalCount > perPage ? `
+            <div style="display:flex; justify-content:center; align-items:center; gap:6px; margin-top:12px; flex-wrap:wrap;">
+                <button class="btn-touch" id="btn-ai-prev" ${currentPage<=1?'disabled':''} style="font-size:0.7rem; padding:5px 10px; ${currentPage<=1?'opacity:0.5;':''}">← Prev</button>
+                <div style="display:flex; gap:3px; align-items:center;">
+                    ${Array.from({length: totalPages}, (_,i)=>i+1).slice(Math.max(0,currentPage-3), Math.min(totalPages, currentPage+2)).map(pageNum => `
+                        <button class="btn-touch ${pageNum===currentPage?'active':''}" data-ai-page="${pageNum}" style="font-size:0.7rem; padding:4px 8px; min-width:28px; background:${pageNum===currentPage?'linear-gradient(135deg,#8b5cf6,#ec4899)':'var(--bg-secondary)'}; color:${pageNum===currentPage?'white':'var(--text-secondary)'}; border:1px solid var(--border-color); border-radius:6px;">${pageNum}</button>
+                    `).join('')}
+                </div>
+                <button class="btn-touch" id="btn-ai-next" ${currentPage>=totalPages?'disabled':''} style="font-size:0.7rem; padding:5px 10px; ${currentPage>=totalPages?'opacity:0.5;':''}">Next →</button>
+                <span style="font-size:0.6rem; color:var(--text-secondary); margin-left:4px;">${totalCount} promo • ${perPage}/hal</span>
+            </div>
+            ` : ''}
           </div>
           <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
         `;
@@ -1414,6 +1441,29 @@ const PromosiModule = {
                 alert('Copy berhasil!');
             });
         });
+        // === AI PAGINATION HANDLERS - /10 ===
+        document.getElementById('btn-ai-prev')?.addEventListener('click', () => {
+            if (window._promosiState.aiCurrentPage > 1) {
+                window._promosiState.aiCurrentPage--;
+                this.updateAIPremiumContainer();
+            }
+        });
+        document.getElementById('btn-ai-next')?.addEventListener('click', () => {
+            const total = window._promosiState.aiSuggestions?.length || 0;
+            const perPage = window._promosiState.aiPerPage || 10;
+            const totalPages = Math.max(1, Math.ceil(total / perPage));
+            if (window._promosiState.aiCurrentPage < totalPages) {
+                window._promosiState.aiCurrentPage++;
+                this.updateAIPremiumContainer();
+            }
+        });
+        document.querySelectorAll('[data-ai-page]').forEach(btn=>{
+            btn.addEventListener('click', (e)=>{
+                const pg = Number(e.currentTarget.getAttribute('data-ai-page'));
+                window._promosiState.aiCurrentPage = pg;
+                this.updateAIPremiumContainer();
+            });
+        });
     },
 
     async handleAIScan() {
@@ -1424,6 +1474,7 @@ const PromosiModule = {
         try {
             const result = await AI.generatePromosi({ goal });
             window._promosiState.aiSuggestions = result.strategies || [];
+            window._promosiState.aiCurrentPage = 1;
             window._promosiState.aiSummary = result.summary;
             window._promosiState.aiLastScan = new Date().toISOString();
             window._promosiState.aiIsLoading = false;

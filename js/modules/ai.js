@@ -253,9 +253,108 @@ Buat 5-7 strategi promosi powerfull dengan profit min 15%. Pakai ID produk ASLI 
         };
     },
 
+
+    // ===== GENERATE PROMO MEMBER PERSONALIZED DENGAN AI (BARU - HUBUNGKAN MEMBER + AI) =====
+    async generateMemberPromosi({ memberSummary, tokoSummary, cart = [], goal = 'member_retention' } = {}) {
+        if (!memberSummary || !memberSummary.member) {
+            throw new Error('memberSummary wajib ada');
+        }
+
+        const member = memberSummary.member;
+        const allProductIds = new Set((await DB.getProducts()).map(p => String(p.id||p.docId)));
+
+        // Siapkan data untuk prompt
+        const systemPrompt = `Kamu adalah CRM Retail Strategist Indonesia yang ahli bikin promo member personalized.
+
+ATURAN WAJIB:
+1. JANGAN ngarang product ID - pakai HANYA ID yang ada di data toko
+2. Buat 2-4 promo member yang personal, profit min 10%
+3. Pakai trigger retail modern: tier upgrade, winback, birthday, category affinity, points accelerator
+4. Format JSON MURNI:
+{"strategies":[
+  {"type":"tebus_member|bundle_member|member_tier|birthday|winback","title":"Judul promo personal","reason":"Alasan personal: member Gold suka Kopi, 12 hari tidak belanja, butuh 1.2jt lagi Platinum","target_product_ids":["id_asli"],"config":{"targetProdId":"id","discountPrice":5000,"prodA":"id1","prodB":"id2","bundlePrice":25000,"percent":5,"discount":3000,"buyProdId":"id","getProdId":"id","buyQty":2,"getQty":1},"copywriting":"Text WA personal","predicted_lift":"+10% retention","urgency":"high|medium|low","priority":85}
+]}
+
+TYPE:
+- tebus_member: butuh targetProdId + discountPrice + minSpend
+- bundle_member: butuh prodA + prodB + bundlePrice
+- member_tier/birthday/winback: butuh percent + discount (akan dihitung sebagai diskon cart)
+- frequent: buy 3 get 1 cheapest`;
+
+        const userPrompt = `MEMBER DATA REAL:
+${JSON.stringify({
+            id: member.id,
+            name: member.name,
+            tier: memberSummary.tier,
+            newTier: memberSummary.newTier,
+            shouldUpgrade: memberSummary.shouldUpgrade,
+            totalSpend: memberSummary.totalSpend,
+            freq30: memberSummary.freq30,
+            avgBasket: memberSummary.avgBasket,
+            daysSinceLast: memberSummary.daysSinceLast,
+            favoriteCategory: memberSummary.favoriteCategory,
+            favoriteProducts: memberSummary.favoriteProducts,
+            isBirthdayMonth: memberSummary.isBirthdayMonth,
+            isBirthdayToday: memberSummary.isBirthdayToday,
+            points: member.points||0,
+            birthday: member.birthday||null
+        }, null, 2)}
+
+TOKO DATA REAL (untuk cari produk yang cocok):
+${JSON.stringify({
+            deadStock: (tokoSummary?.deadStock||[]).slice(0,5),
+            bestSellers: (tokoSummary?.bestSellers||[]).slice(0,5),
+            lowStock: (tokoSummary?.lowStock||[]).slice(0,5),
+            slowMoving: (tokoSummary?.slowMoving||[]).slice(0,5)
+        }, null, 2)}
+
+CART SAAT INI:
+${JSON.stringify(cart.slice(0,5).map(c=>({prodId: c.prodId, name: c.name, qty: c.qty, price: c.price})), null, 2)}
+
+TUGAS:
+- Kalau shouldUpgrade true (misal Gold butuh 1.2jt lagi Platinum), buat bundle hemat biar cepat naik tier, pakai bestSeller + deadStock
+- Kalau daysSinceLast >=10 dan ada favoriteCategory, buat tebus murah produk favoriteCategory atau deadStock
+- Kalau isBirthdayMonth true, buat birthday bundle spesial pakai bestSeller + produk favorit member
+- Kalau favoriteCategory ada, buat bundling favorite category + slowMoving
+- Kalau freq30 rendah (<2), buat points accelerator atau winback
+- Semua pakai ID produk ASLI dari toko data di atas
+- Profit min 10%, jangan bikin rugi
+
+Goal: ${goal}`;
+
+        const result = await this.generate({ systemPrompt, userPrompt });
+        const strategies = result.strategies || result.data || [];
+
+        // Validasi ID produk
+        const validated = strategies.map(s => {
+            const validTargetIds = (s.target_product_ids||[]).filter(id => allProductIds.has(String(id)));
+            if (validTargetIds.length === 0 && s.config) {
+                const cfgIds = [s.config.targetProdId, s.config.prodId, s.config.prodA, s.config.prodB, s.config.buyProdId, s.config.getProdId].filter(Boolean).map(String);
+                const validCfgIds = cfgIds.filter(id => allProductIds.has(id));
+                if (validCfgIds.length > 0) s.target_product_ids = validCfgIds;
+            } else {
+                s.target_product_ids = validTargetIds;
+            }
+            // Set default priority untuk AI member
+            if (!s.priority) s.priority = 85;
+            if (!s.isAI) s.isAI = true;
+            if (!s.source) s.source = 'ai_member';
+            return s;
+        }).filter(s => s.target_product_ids && s.target_product_ids.length > 0);
+
+        console.log(`AI Member strategies: ${strategies.length} -> validated: ${validated.length}`);
+
+        return {
+            memberSummary,
+            tokoSummary,
+            strategies: validated
+        };
+    },
+
     async generateCustom({ systemPrompt, userPrompt, temperature, parseJson = true }) {
         return await this.generate({ systemPrompt, userPrompt, temperature, parseJson });
     }
+
 };
 
 export default AIModule;

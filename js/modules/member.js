@@ -278,6 +278,10 @@ const MemberModule = {
               <label style="font-size:0.7rem; color:var(--text-secondary);">No HP (Unik) *</label>
               <input id="member-input-phone" placeholder="08xxxx" inputmode="numeric" class="form-control" />
             </div>
+            <div>
+              <label style="font-size:0.7rem; color:var(--text-secondary);">Tanggal Lahir 🎂 (Opsional untuk promo ultah)</label>
+              <input id="member-input-birthday" type="date" class="form-control" />
+            </div>
           </div>
           <div style="display:flex; gap:8px; margin-top:10px;">
             <button class="btn-touch active" id="btn-generate-member" style="flex:1;">💾 Generate & Simpan</button>
@@ -353,10 +357,11 @@ const MemberModule = {
     document.getElementById('btn-generate-member')?.addEventListener('click', async () => {
       const name = document.getElementById('member-input-name').value.trim();
       const phone = document.getElementById('member-input-phone').value.trim();
+      const birthday = document.getElementById('member-input-birthday')?.value || null;
       if (!name || !phone) return alert('Nama & No HP wajib diisi');
       const all = await this.getAllMembers();
       if (all.some(m => String(m.phone) === String(phone))) return alert('No HP sudah terdaftar');
-      const member = await this.createMember({ name, phone });
+      const member = await this.createMember({ name, phone, birthday });
       this.showBarcodePreview(member);
       window.app.loadModule('member');
     });
@@ -364,6 +369,7 @@ const MemberModule = {
     document.getElementById('btn-clear-member-form')?.addEventListener('click', () => {
       document.getElementById('member-input-name').value = '';
       document.getElementById('member-input-phone').value = '';
+      const bd = document.getElementById('member-input-birthday'); if (bd) bd.value = '';
     });
 
     document.getElementById('btn-save-tier-threshold')?.addEventListener('click', () => {
@@ -507,14 +513,18 @@ const MemberModule = {
     document.getElementById('btn-close-member-card-2')?.addEventListener('click', closePreview);
   },
 
-  async createMember({ name, phone }) {
+  async createMember({ name, phone, birthday }) {
     const id = this.generateMemberId();
     const pointsCfg = this.getPointsConfig();
+    const bdayDate = birthday ? new Date(birthday) : null;
     const member = {
       id,
       docId: id,
       name,
       phone: String(phone),
+      birthday: bdayDate && !isNaN(bdayDate) ? bdayDate.toISOString() : null,
+      birthMonth: bdayDate && !isNaN(bdayDate) ? bdayDate.getMonth()+1 : null,
+      birthDay: bdayDate && !isNaN(bdayDate) ? bdayDate.getDate() : null,
       barcodeValue: id,
       tier: 'bronze',
       points: Number(pointsCfg.welcomePoints||50),
@@ -535,7 +545,7 @@ const MemberModule = {
     if (!preview) return;
     preview.style.display = 'block';
     document.getElementById('preview-member-name').textContent = member.name;
-    document.getElementById('preview-member-id').textContent = member.id + ' | ' + member.phone;
+    document.getElementById('preview-member-id').textContent = member.id + ' | ' + member.phone + (member.birthday ? ' | 🎂 ' + new Date(member.birthday).toLocaleDateString('id-ID') : '');
     if (window.JsBarcode) {
       try { JsBarcode('#barcode-canvas', member.barcodeValue || member.id, { format: 'CODE128', width: 2, height: 70, displayValue: true, fontSize: 14 }); } catch(e){}
     }
@@ -573,8 +583,37 @@ const MemberModule = {
     const avgBasket = memberTrx.length ? totalSpend / memberTrx.length : 0;
     const last = memberTrx.sort((a,b)=> (b.createdAt||0)-(a.createdAt||0))[0];
     const daysSinceLast = last ? Math.floor((Date.now() - new Date(last.createdAt||last.timestamp||Date.now()).getTime())/86400000) : 999;
+
+    const categoryCount = {};
+    const productCount = {};
+    memberTrx.forEach(trx => {
+      const items = trx.items || trx.cart || trx.produk || [];
+      (Array.isArray(items) ? items : []).forEach(item => {
+        const cat = item.category || item.kategori || 'Umum';
+        categoryCount[cat] = (categoryCount[cat]||0) + Number(item.qty||1);
+        const pname = item.name || item.nama || String(item.prodId||item.id||'');
+        productCount[pname] = (productCount[pname]||0) + Number(item.qty||1);
+      });
+    });
+    const favoriteCategory = Object.entries(categoryCount).sort((a,b)=>b[1]-a[1])[0]?.[0] || null;
+    const favoriteProducts = Object.entries(productCount).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([name])=>name);
+
     const tierCfg = this.getTierConfig()[member.tier||'bronze'] || this.getTierConfig().bronze;
     const newTier = this.calculateTier(totalSpend);
+
+    let isBirthdayMonth = false;
+    let isBirthdayToday = false;
+    if (member.birthday) {
+      const b = new Date(member.birthday);
+      const now = new Date();
+      if (!isNaN(b)) {
+        isBirthdayMonth = b.getMonth() === now.getMonth();
+        isBirthdayToday = b.getMonth() === now.getMonth() && b.getDate() === now.getDate();
+      }
+    } else if (member.birthMonth) {
+      isBirthdayMonth = Number(member.birthMonth) === (new Date().getMonth()+1);
+    }
+
     return {
       member,
       totalSpend,
@@ -584,7 +623,13 @@ const MemberModule = {
       tier: member.tier,
       newTier,
       tierDiscPercent: tierCfg.disc,
-      shouldUpgrade: newTier !== member.tier
+      shouldUpgrade: newTier !== member.tier,
+      favoriteCategory,
+      favoriteProducts,
+      isBirthdayMonth,
+      isBirthdayToday,
+      categoryCount,
+      productCount
     };
   }
 };
