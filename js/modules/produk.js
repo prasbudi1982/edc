@@ -274,8 +274,8 @@ const ProdukModule = {
                             <option value="price-desc">Harga Termahal</option>
                         </select>
                     </div>
-                    <div id="product-list">
-                        ${pageItems.length === 0 ? '<p style="text-align:center; opacity:0.6;">Belum ada produk untuk filter ini</p>' : pageItems.map(p => {
+                                        <div id="product-list">
+                        ${pageItems.length === 0 ? '<p style="text-align:center; opacity:0.6; padding:20px;">Belum ada produk untuk filter ini</p>' : pageItems.map(p => {
                             const exp = this.getExpiredInfo(p);
                             const isExp = exp.isExpired;
                             const isNear = exp.isNear;
@@ -284,67 +284,41 @@ const ProdukModule = {
                             const hasOpnameLog = p.opnameDiff && p.opnameDiff!==0;
                             const isRusak = p.kondisi==='rusak' || p.status==='rusak' || hasRusakLog;
                             const borderColor = isExp ? '#ef4444' : isRusak ? '#6b7280' : hasOpnameLog ? '#8b5cf6' : isNear ? '#f59e0b' : 'var(--border-color)';
-                            const bgTint = isExp ? 'rgba(239,68,68,0.06)' : isRusak ? 'rgba(107,114,128,0.08)' : hasOpnameLog ? 'rgba(139,92,246,0.08)' : isNear ? 'rgba(245,158,11,0.07)' : 'var(--bg-card)';
-                            return `
-                            <div class="product-item" style="display:flex; justify-content:space-between; align-items:flex-start; padding:10px 10px; margin-bottom:8px; background:${bgTint}; background-color:var(--bg-card); border:1px solid var(--border-color); border-left:3px solid ${borderColor}; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,0.08); gap:10px;">
-                                <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:5px;">
-                                    <div style="display:flex; align-items:flex-start; gap:6px; flex-wrap:wrap;">
-                                        <strong style="font-size:0.88rem; line-height:1.2; color:var(--text-primary); word-break:break-word;">${p.name}</strong>
-                                        <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
-                                            ${p.taxEnabled ? `<span style="font-size:0.58rem; background:var(--accent-color); color:#fff; padding:2px 6px; border-radius:10px; font-weight:600;">Pajak ${p.taxRate || p.taxPercent || 11}%</span>` : ''}
-                                            ${isExp ? `<span style="font-size:0.58rem; background:var(--danger-color); color:#fff; padding:2px 6px; border-radius:10px; font-weight:600;">⛔ ${exp.label}</span>` : ''}
-                                            ${!isExp && isNear ? `<span style="font-size:0.58rem; background:#f59e0b; color:#fff; padding:2px 6px; border-radius:10px; font-weight:600;">⏰ H-${exp.days}</span>` : ''}
-                                            ${isRusak ? `<span style="font-size:0.58rem; background:#6b7280; color:#fff; padding:2px 6px; border-radius:10px; font-weight:600;">RUSAK${hasRusakLog && !(p.kondisi==='rusak' || p.status==='rusak') ? ' '+_disposalLogs.filter(l=>String(l.prodId)===String(p.id) && l.type==='rusak').reduce((s,l)=>s+Number(l.qty||0),0)+' pcs' : ''}</span>` : ''}
-                                            ${hasOpnameLog ? `<span style="font-size:0.58rem; background:#8b5cf6; color:#fff; padding:2px 6px; border-radius:10px; font-weight:600;">OPNAME ${p.opnameDiff>0?'+':''}${p.opnameDiff}</span>` : ''}
-                                        </div>
-                                    </div>
-                                    ${exp.hasExpiry && !isExp && !isNear && !hasRusakLog && !hasOpnameLog ? `<div style="margin:0; padding:0; display:flex;"><span style="font-size:0.62rem; background:var(--bg-secondary); color:var(--text-secondary); border:1px solid var(--border-color); padding:2px 7px; border-radius:10px; display:inline-flex; align-items:center; gap:3px; margin-left:0;">📅 ${exp.labelDate}</span></div>` : ''}
-                                    <div style="font-size:0.72rem; color:var(--text-secondary); line-height:1.35; display:flex; flex-direction:column; gap:2px; align-items:flex-start; min-width:0;">
-                                        <span style="display:flex; gap:6px; line-height:1.35; margin:0;"><span style="color:var(--text-secondary);">•</span> <span>ID: ${p.barcode || p.id || '-'}</span></span>
-                                        <span style="display:flex; gap:6px; line-height:1.35; margin:0; max-width:100%; overflow:hidden;"><span style="color:var(--text-secondary);">•</span> <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${p.category || 'Tanpa Kategori'}</span></span>
-                                        <span style="display:flex; gap:6px; line-height:1.35; margin:0;"><span style="color:var(--text-secondary);">•</span> <span>Stok: <b style="color:var(--text-primary);">${this.formatStokGrosir(p)}</b></span></span>
-                                        ${(p.satuanBeli && p.satuanBeli!=='pcs' && this.getIsiPerSatuan(p)>1) ? `
-                                        <div style="display:flex; flex-direction:column; gap:2px; margin-top:2px; background:rgba(14,165,233,0.08); border:1px solid rgba(14,165,233,0.15); padding:6px 8px; border-radius:8px; width:100%; box-sizing:border-box;">
-                                            <span style="font-size:0.7rem; color:var(--text-primary);">📦 1 ${p.satuanBeli} = ${this.getIsiPerSatuan(p)} pcs</span>
-                                            <span style="font-size:0.7rem; color:var(--text-secondary);">Beli ${p.satuanBeli}: Rp ${(p.hargaBeliDus||0).toLocaleString('id-ID')}</span>
-                                            <span style="font-size:0.7rem; color:var(--text-secondary);">Jual ${p.satuanBeli}: Rp ${(p.hargaJualDus||p.hargaJualGrosir||0).toLocaleString('id-ID')}</span>
-                                        </div>` : `<span style="font-size:0.68rem; opacity:0.7;">Kemasan: Eceran</span>`}
-                                        ${p.expiredDate || exp.hasExpiry ? `<span style="display:flex; gap:6px; line-height:1.35; margin:0;"><span style="color:var(--text-secondary);">•</span> <span>ED: ${p.expiredDate ? (isNaN(new Date(p.expiredDate).getTime()) ? p.expiredDate : new Date(p.expiredDate).toISOString().split('T')[0]) : (exp.date ? exp.date.toISOString().split('T')[0] : exp.labelDate)}</span></span>` : ''}
-                                        <span style="display:flex; gap:6px; line-height:1.35; margin:0;"><span style="color:var(--text-secondary);">•</span> <span>Beli: <span style="color:var(--text-secondary);">Rp${(p.buyPrice ?? p.costPrice ?? 0).toLocaleString('id-ID')}/pcs</span></span></span>
-                                        <span style="display:flex; gap:6px; line-height:1.35; margin:0;"><span style="color:var(--text-secondary);">•</span> <span>Jual: <b style="color:var(--text-primary);">Rp${Number(p.price).toLocaleString('id-ID')}/pcs</b></span></span>
-                                    </div>
-                                    ${(() => {
-                                        let totalRusakPcs = 0;
-                                        let lastReason = '';
-                                        try {
-                                            const logs = JSON.parse(localStorage.getItem('edc_disposal_logs')||'[]');
-                                            const myLogs = logs.filter(l=>String(l.prodId)===String(p.id) && l.type==='rusak');
-                                            totalRusakPcs = myLogs.reduce((s,l)=>s+Number(l.qty||0),0);
-                                            if(myLogs.length>0) lastReason = myLogs[myLogs.length-1].reason||'';
-                                        } catch(e){}
-                                        if(totalRusakPcs===0 && p.disposal && p.disposal.type==='rusak') {
-                                            totalRusakPcs = Number(p.disposal.qty||0);
-                                            lastReason = p.disposal.reason||'';
-                                        }
-                                        if(totalRusakPcs>0) {
-                                            return `<div style="font-size:0.65rem; color:#ef4444; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); padding:3px 6px; border-radius:6px; margin-top:4px; display:inline-block;">🚮 ${totalRusakPcs} pcs rusak${lastReason ? ' - '+lastReason : ''}</div>`;
-                                        }
-                                        if(p.disposal && p.disposal.type==='expired') {
-                                            return `<div style="font-size:0.65rem; color:#ef4444; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); padding:3px 6px; border-radius:6px; margin-top:4px; display:inline-block;">🚮 ${p.disposal.qty} pcs expired - ${p.disposal.reason||''}</div>`;
-                                        }
-                                        return '';
-                                    })()}
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:5px; margin-left:6px; min-width:86px; max-width:90px; flex-shrink:0;">
-                                    <button class="btn-touch btn-edit-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.68rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); border-radius:8px; display:flex; align-items:center; justify-content:center; gap:4px;">✏️ Edit</button>
-                                    <button class="btn-touch btn-delete-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.68rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:8px; display:flex; align-items:center; justify-content:center; gap:4px;">🗑️ Hapus</button>
-                                    ${!isExp && !isRusak ? `<button class="btn-touch btn-rusak-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.68rem; font-weight:700; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); color:#ef4444; border-radius:8px; display:flex; align-items:center; justify-content:center; gap:4px;">❌ Rusak</button>` : ''}
-                                    
-                                    ${isRusak ? `<button class="btn-touch btn-restore-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.65rem; font-weight:700; background:var(--success-color); color:#fff; border:1px solid var(--success-color); border-radius:8px;">↩️ Pulihkan</button>` : ''}
-                                    ${!isExp ? `<button class="btn-touch btn-opname-prod" data-id="${p.id}" style="width:100%; padding:7px 8px; font-size:0.65rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:8px;">📋 Opname</button>` : ''}
-                                </div>
-                            </div>
-                        `}).join('')}
+                            const bgTint = isExp ? 'rgba(239,68,68,0.04)' : isRusak ? 'rgba(107,114,128,0.05)' : hasOpnameLog ? 'rgba(139,92,246,0.05)' : isNear ? 'rgba(245,158,11,0.05)' : 'var(--bg-card)';
+                            const stockNum = Number(p.stock||0);
+                            const isi = this.getIsiPerSatuan(p);
+                            const satuanBeli = this.getSatuanBeli(p);
+                            let stokText = '';
+                            if(isi>1 && satuanBeli!=='pcs'){
+                                const dus = Math.floor(stockNum/isi);
+                                stokText = dus + ' ' + satuanBeli.charAt(0).toUpperCase()+satuanBeli.slice(1) + ' | ' + stockNum + ' pcs';
+                            } else {
+                                stokText = stockNum + ' pcs';
+                            }
+                            const rusakQty = _disposalLogs.filter(l=>String(l.prodId)===String(p.id) && l.type==='rusak').reduce((s,l)=>s+Number(l.qty||0),0) || (isRusak ? stockNum : 0);
+                            const opnameDiffVal = p.opnameDiff || 0;
+                            let badgeHtml = '';
+                            if(p.taxEnabled) badgeHtml += '<span style="font-size:0.62rem; background:#2563eb; color:#fff; padding:2px 6px; border-radius:5px; font-weight:600; display:inline-block;">Pajak '+(p.taxRate||p.taxPercent||11)+'%</span>';
+                            if(isExp) badgeHtml += '<span style="font-size:0.62rem; background:#ef4444; color:#fff; padding:2px 6px; border-radius:5px; font-weight:600; display:inline-block;">Expired</span>';
+                            if(isRusak) badgeHtml += '<span style="font-size:0.62rem; background:#6b7280; color:#fff; padding:2px 6px; border-radius:5px; font-weight:600; display:inline-block; margin-top:2px;">Rusak '+rusakQty+'</span>';
+                            if(hasOpnameLog) badgeHtml += '<span style="font-size:0.62rem; background:#8b5cf6; color:#fff; padding:2px 6px; border-radius:5px; font-weight:600; display:inline-block; margin-top:2px;">Opname '+(opnameDiffVal>0?'+':'')+opnameDiffVal+'</span>';
+                            let badgeWrapper = '';
+                            if(badgeHtml) badgeWrapper = '<div style="display:flex; flex-wrap:wrap; gap:3px; align-items:center; margin-top:3px;">'+badgeHtml+'</div>';
+                            return '<div class="product-item" style="display:flex; justify-content:space-between; align-items:center; padding:10px 12px; margin-bottom:8px; background:'+bgTint+'; background-color:var(--bg-card); border:1px solid var(--border-color); border-left:3px solid '+borderColor+'; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,0.06); gap:10px;">'
+                                + '<div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;">'
+                                + '<strong style="font-size:0.90rem; line-height:1.25; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">'+p.name+'</strong>'
+                                + '<span style="font-size:0.75rem; color:var(--text-secondary); font-weight:500;">'+stokText+'</span>'
+                                + badgeWrapper
+                                + '</div>'
+                                + '<button class="btn-touch btn-detail-prod" data-id="'+p.id+'" style="min-width:44px; padding:4px 6px; font-size:0.60rem; font-weight:600; background:var(--accent-color, #2563eb); color:#fff; border:none; border-radius:5px; flex-shrink:0;">Detail</button>'
+                                + '</div>';
+                        }).join('')}
+                    </div>
+
+                    <!-- Modal Detail Produk FINAL v2 -->
+                    <div id="product-detail-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.6); backdrop-filter:blur(6px); z-index:9999; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
+                        <div id="product-detail-card" style="background:var(--bg-card, #1e293b); width:100%; max-width:440px; max-height:90vh; overflow-y:auto; border-radius:16px; border:1px solid var(--border-color); box-shadow:0 20px 40px rgba(0,0,0,0.4);">
+                        </div>
                     </div>
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
                         <button id="btn-prev-page" class="btn-touch" style="padding:4px 8px; font-size:0.7rem;" ${this.currentPage <= 1 ? 'disabled' : ''}>Prev</button>
@@ -415,6 +389,13 @@ const ProdukModule = {
             const totalPages = Math.ceil(sorted.length / this.itemsPerPage) || 1;
             if (this.currentPage < totalPages) { this.currentPage++; window.app.loadModule('produk'); }
         });
+        document.querySelectorAll('.btn-detail-prod').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const id = btn.getAttribute('data-id');
+                this.openDetailModal(id);
+            });
+        });
+
         document.querySelectorAll('.btn-edit-prod').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const id = e.currentTarget.dataset.id;
@@ -1092,7 +1073,96 @@ const ProdukModule = {
         }
     },
 
+
+    openDetailModal(id) {
+        const p = this.products.find(x=>String(x.id)===String(id));
+        if(!p) return;
+        const exp = this.getExpiredInfo(p);
+        const isExp = exp.isExpired;
+        const isNear = exp.isNear;
+        let disposalLogs = [];
+        try { disposalLogs = JSON.parse(localStorage.getItem('edc_disposal_logs')||'[]'); } catch(e){}
+        const hasRusakLog = disposalLogs.some(l=>String(l.prodId)===String(p.id) && l.type==='rusak');
+        const hasOpnameLog = p.opnameDiff && p.opnameDiff!==0;
+        const isRusak = p.kondisi==='rusak' || p.status==='rusak' || hasRusakLog;
+        const stokGrosir = this.formatStokGrosir(p);
+        const isi = this.getIsiPerSatuan(p);
+        const modal = document.getElementById('product-detail-modal');
+        const card = document.getElementById('product-detail-card');
+        if(!modal || !card) return;
+        let badges = '';
+        if(p.taxEnabled) badges += '<span style="font-size:0.62rem; background:#2563eb; color:#fff; padding:2px 7px; border-radius:6px; font-weight:600;">Pajak '+(p.taxRate||p.taxPercent||11)+'%</span>';
+        if(isExp) badges += '<span style="font-size:0.62rem; background:#ef4444; color:#fff; padding:2px 7px; border-radius:6px;">Expired</span>';
+        else if(isNear) badges += '<span style="font-size:0.62rem; background:#f59e0b; color:#fff; padding:2px 7px; border-radius:6px;">H-'+exp.days+'</span>';
+        if(isRusak) badges += '<span style="font-size:0.62rem; background:#6b7280; color:#fff; padding:2px 7px; border-radius:6px;">Rusak</span>';
+        if(hasOpnameLog) badges += '<span style="font-size:0.62rem; background:#8b5cf6; color:#fff; padding:2px 7px; border-radius:6px;">Opname '+(p.opnameDiff>0?'+':'')+p.opnameDiff+'</span>';
+        let stokDetail = '';
+        if(p.satuanBeli && p.satuanBeli!=='pcs' && isi>1){
+            stokDetail = '<div style="background:rgba(14,165,233,0.08); border:1px solid rgba(14,165,233,0.15); padding:8px; border-radius:8px; margin-top:2px;">'
+                + '<div style="font-size:0.75rem;">📦 1 '+p.satuanBeli+' = '+isi+' pcs</div>'
+                + '<div style="display:flex; justify-content:space-between; font-size:0.72rem; margin-top:4px;"><span>Beli / '+p.satuanBeli+'</span><span>Rp '+(p.hargaBeliDus||0).toLocaleString('id-ID')+'</span></div>'
+                + '<div style="display:flex; justify-content:space-between; font-size:0.72rem;"><span>Jual / '+p.satuanBeli+'</span><span>Rp '+(p.hargaJualDus||p.hargaJualGrosir||0).toLocaleString('id-ID')+'</span></div></div>';
+        } else {
+            stokDetail = '<div style="font-size:0.7rem; opacity:0.6;">Kemasan: Eceran</div>';
+        }
+        let expDateStr = '-';
+        if(p.expiredDate) expDateStr = isNaN(new Date(p.expiredDate).getTime()) ? p.expiredDate : new Date(p.expiredDate).toISOString().split('T')[0];
+        else if(exp.date) expDateStr = exp.date.toISOString().split('T')[0];
+        else expDateStr = exp.labelDate || '-';
+        let actionBtns = '';
+        if(isExp){
+            // FINAL RULE: expired hanya Edit & Hapus
+            actionBtns += '<button class="btn-touch" data-action="edit" data-id="'+p.id+'" style="padding:10px; font-size:0.8rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px;">✏️ Edit</button>';
+            actionBtns += '<button class="btn-touch" data-action="delete" data-id="'+p.id+'" style="padding:10px; font-size:0.8rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; color:var(--text-secondary);">🗑️ Hapus</button>';
+        } else {
+            actionBtns += '<button class="btn-touch" data-action="edit" data-id="'+p.id+'" style="padding:10px; font-size:0.8rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px;">✏️ Edit</button>';
+            actionBtns += '<button class="btn-touch" data-action="delete" data-id="'+p.id+'" style="padding:10px; font-size:0.8rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px; color:var(--text-secondary);">🗑️ Hapus</button>';
+            if(!isRusak) actionBtns += '<button class="btn-touch" data-action="rusak" data-id="'+p.id+'" style="padding:10px; font-size:0.8rem; font-weight:700; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.25); color:#ef4444; border-radius:10px;">❌ Rusak</button>';
+            actionBtns += '<button class="btn-touch" data-action="opname" data-id="'+p.id+'" style="padding:10px; font-size:0.8rem; font-weight:600; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:10px;">📋 Opname</button>';
+            if(isRusak || hasOpnameLog) actionBtns += '<button class="btn-touch" data-action="restore" data-id="'+p.id+'" style="padding:10px; font-size:0.8rem; font-weight:700; background:var(--success-color, #10b981); color:#fff; border:none; border-radius:10px;">↩️ Pulihkan</button>';
+        }
+        card.innerHTML = '<div style="padding:20px;">'
+            + '<div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px;">'
+            + '<div style="flex:1; padding-right:12px;"><h3 style="margin:0 0 6px 0; font-size:1.05rem;">'+p.name+'</h3><div style="display:flex; gap:5px; flex-wrap:wrap;">'+badges+'</div></div>'
+            + '<button id="btn-close-detail-modal" style="background:var(--bg-secondary); border:1px solid var(--border-color); width:32px; height:32px; border-radius:8px;">✕</button></div>'
+            + '<div style="background:var(--bg-primary, #0f172a); border:1px solid var(--border-color); border-radius:10px; padding:12px; margin-bottom:12px;">'
+            + '<div style="display:grid; gap:6px; font-size:0.8rem;">'
+            + '<div style="display:flex; justify-content:space-between;"><span>ID / Barcode</span><b>'+(p.barcode || p.id || '-')+'</b></div>'
+            + '<div style="display:flex; justify-content:space-between;"><span>Stok Sistem</span><b>'+stokGrosir+'</b></div>'
+            + stokDetail
+            + '<div style="display:flex; justify-content:space-between;"><span>Tgl Expired</span><span>'+expDateStr+'</span></div>'
+            + '<div style="display:flex; justify-content:space-between;"><span>Harga Beli / pcs</span><span>Rp'+(p.buyPrice ?? 0).toLocaleString('id-ID')+'</span></div>'
+            + '<div style="display:flex; justify-content:space-between;"><span>Harga Jual / pcs</span><b>Rp'+Number(p.price||0).toLocaleString('id-ID')+'</b></div>'
+            + '</div></div>'
+            + '<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">'+actionBtns+'</div>'
+            + '<button style="width:100%; margin-top:10px; padding:10px; font-size:0.8rem; background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px;" id="btn-close-detail-bottom">Tutup</button></div>';
+        modal.style.display='flex';
+        const close = () => { modal.style.display='none'; card.innerHTML=''; };
+        document.getElementById('btn-close-detail-modal')?.addEventListener('click', close);
+        document.getElementById('btn-close-detail-bottom')?.addEventListener('click', close);
+        modal.addEventListener('click', (e)=>{ if(e.target===modal) close(); });
+        card.querySelectorAll('[data-action]').forEach(btn=>{
+            btn.addEventListener('click', async ()=>{
+                const act = btn.getAttribute('data-action');
+                const pid = btn.getAttribute('data-id');
+                close();
+                if(act==='edit') this.editProduct(pid);
+                else if(act==='delete') this.deleteProduct(pid);
+                else if(act==='rusak') this.markAsRusak(pid);
+                else if(act==='opname') this.opnameProduct(pid);
+                else if(act==='restore') this.restoreProduct(pid);
+                else if(act==='buang-expired') this.buangExpired(pid);
+            });
+        });
+    },
+    closeDetailModal(){
+        const modal = document.getElementById('product-detail-modal');
+        if(modal) modal.style.display='none';
+    },
+
     async showDisposalLog() {
+
+
         try {
             const logs = await DB.getDisposalLogs() || JSON.parse(localStorage.getItem('edc_disposal_logs')||'[]');
             if(!logs.length) return alert('Belum ada log buang/rusak/opname');
