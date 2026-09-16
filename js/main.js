@@ -426,29 +426,30 @@ class Router {
         el.innerHTML = `
             <span style="font-weight: 700; color: #ffffff; font-size: 15px; letter-spacing: -0.01em;">${storeName}</span>
             <span style="color: #94a3b8; font-weight: 500; font-size: 13px; margin-right: 4px;">${roleLabel}</span>
-            ${!isAdmin ? `<button id="btn-absen-header" class="btn-absen-header" type="button" title="Absen / Switch Operator Kasir" style="background: #10b981; color: #ffffff; border: none; padding: 8px 14px; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; touch-action: manipulation; box-shadow: 0 2px 4px rgba(0,0,0,0.15);"><i data-lucide="clock" style="width: 16px; height: 16px;"></i> Absen</button>` : ''}
             ${isAdmin ? `<button id="btn-logout" type="button" title="Keluar / Ganti Akun" style="background: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;"><i data-lucide="log-out" style="width: 14px; height: 14px;"></i> Out</button>` : ''}
         `;
-        const btnAbsen = document.getElementById('btn-absen-header');
-        if (btnAbsen) {
-            const handleAbsenClick = (e) => { e.preventDefault(); e.stopPropagation(); this.renderAbsenModal(); };
-            btnAbsen.addEventListener('click', handleAbsenClick);
-            btnAbsen.addEventListener('touchstart', (e) => { e.preventDefault(); this.renderAbsenModal(); }, { passive: false });
-        }
         const btnLogout = document.getElementById('btn-logout');
         if (btnLogout) btnLogout.addEventListener('click', (e) => { e.preventDefault(); this.logout(); });
         if (window.lucide) lucide.createIcons();
     }
 
     applyPermissionUI() {
+        // Refresh navButtons to include dynamically added absen tab
+        this.navButtons = document.querySelectorAll('.nav-btn');
         this.navButtons.forEach(btn => {
             const mod = btn.getAttribute('data-module');
             const role = this.currentUser?.role;
             const isOperator = role === 'operator' || role === 'kasir';
             const isAdmin = role === 'admin';
-            if (isAdmin) btn.style.display = 'flex';
-            else if (isOperator) btn.style.display = mod === 'transaksi' ? 'flex' : 'none';
-            else btn.style.display = mod === 'transaksi' ? 'flex' : 'none';
+            if (isAdmin) {
+                // Admin tidak melihat tab absen
+                btn.style.display = mod === 'absen' ? 'none' : 'flex';
+            } else if (isOperator) {
+                // Operator hanya melihat Transaksi + Absen
+                btn.style.display = (mod === 'transaksi' || mod === 'absen') ? 'flex' : 'none';
+            } else {
+                btn.style.display = mod === 'transaksi' ? 'flex' : 'none';
+            }
         });
     }
 
@@ -462,13 +463,28 @@ class Router {
     }
 
     initNav() {
+        this.navButtons = document.querySelectorAll('.nav-btn');
         this.navButtons.forEach(btn => {
             btn.addEventListener('click', () => {
                 const moduleName = btn.getAttribute('data-module');
+                
+                // === TAB ABSEN KHUSUS ===
+                if (moduleName === 'absen') {
+                    const roleCheck = this.currentUser?.role;
+                    const isOp = roleCheck === 'operator' || roleCheck === 'kasir';
+                    if (!isOp) {
+                        alert('Akses Ditolak! Hanya Operator yang boleh absen.');
+                        return;
+                    }
+                    // Jangan pindah module, hanya buka modal absen
+                    this.renderAbsenModal();
+                    return;
+                }
+
                 const roleCheck = this.currentUser?.role;
                 const isOp = roleCheck === 'operator' || roleCheck === 'kasir';
                 if (isOp) {
-                    if (!['transaksi'].includes(moduleName)) { alert(`Akses Ditolak! Operator "${this.currentUser.name}" hanya boleh akses Transaksi.`); return; }
+                    if (!['transaksi','absen'].includes(moduleName)) { alert(`Akses Ditolak! Operator "${this.currentUser.name}" hanya boleh akses Transaksi & Absen.`); return; }
                 }
                 if (moduleName !== 'setting' && !this.checkCloudConfig()) {
                     alert('Konfigurasi Firebase belum lengkap. Anda dialihkan ke Pengaturan.');
