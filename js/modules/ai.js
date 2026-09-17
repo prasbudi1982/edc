@@ -1,9 +1,14 @@
 import DB from './db.js';
 
 const AI_CONFIG = {
-    WORKER_URL: localStorage.getItem('edc_worker_url') || "https://edu-slide.welybudiprasetya.workers.dev",
+    WORKER_URL: localStorage.getItem('edc_worker_url') || "https://promo-ai.welybudiprasetya.workers.dev",
     MODEL: "openai/gpt-oss-120b",
-    TEMPERATURE: 0.6
+    TEMPERATURE: 0.6,
+    // === GEMINI FALLBACK CONFIG ===
+    GEMINI_API_KEY: localStorage.getItem('edc_gemini_key') || "",
+    GEMINI_MODEL: localStorage.getItem('edc_gemini_model') || "gemini-3.5-flash-lite",
+    USE_GEMINI_FALLBACK: localStorage.getItem('edc_use_gemini_fallback') !== 'false', // default true
+    GEMINI_WORKER_PATH: "/gemini" // path di worker yang sama untuk fallback
 };
 
 const safeArray = (val) => Array.isArray(val) ? val : [];
@@ -11,10 +16,85 @@ const safeArray = (val) => Array.isArray(val) ? val : [];
 const AIModule = {
     config: AI_CONFIG,
 
-    setConfig({ workerUrl, model, temperature }) {
-        if (workerUrl) this.config.WORKER_URL = workerUrl;
+    setConfig({ workerUrl, model, temperature, geminiKey, geminiModel, useGeminiFallback }) {
+        if (workerUrl) {
+            this.config.WORKER_URL = workerUrl;
+            localStorage.setItem('edc_worker_url', workerUrl);
+        }
         if (model) this.config.MODEL = model;
         if (temperature != null) this.config.TEMPERATURE = temperature;
+        if (geminiKey !== undefined) {
+            this.config.GEMINI_API_KEY = geminiKey;
+            localStorage.setItem('edc_gemini_key', geminiKey);
+        }
+        if (geminiModel) {
+            this.config.GEMINI_MODEL = geminiModel;
+            localStorage.setItem('edc_gemini_model', geminiModel);
+        }
+        if (useGeminiFallback !== undefined) {
+            this.config.USE_GEMINI_FALLBACK = useGeminiFallback;
+            localStorage.setItem('edc_use_gemini_fallback', String(useGeminiFallback));
+        }
+    },
+
+    // === GEMINI DIRECT CALL (FALLBACK) ===
+    async callGemini({ systemPrompt, userPrompt, temperature }) {
+        // Opsi 1: Via Worker yang sama (aman, key di env worker)
+        // Worker harus handle POST /gemini
+        if (this.config.WORKER_URL) {
+            try {
+                const geminiWorkerUrl = this.config.WORKER_URL.replace(/\/$/, '') + this.config.GEMINI_WORKER_PATH;
+                console.log('AI fallback trying Gemini via worker:', geminiWorkerUrl);
+                const res = await fetch(geminiWorkerUrl, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        model: this.config.GEMINI_MODEL,
+                        systemPrompt,
+                        userPrompt,
+                        temperature: temperature ?? this.config.TEMPERATURE
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const content = data.choices?.[0]?.message?.content || data.content || data.text || "";
+                    if (content) return content;
+                }
+                console.warn('Gemini via worker failed, coba direct API');
+            } catch(e) {
+                console.warn('Gemini worker error:', e.message);
+            }
+        }
+
+        // Opsi 2: Direct ke Google API (butuh API key di frontend - kurang aman tapi jalan)
+        const apiKey = this.config.GEMINI_API_KEY;
+        if (!apiKey) {
+            throw new Error('Gemini API key belum diisi. Isi di setConfig atau localStorage edc_gemini_key');
+        }
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.config.GEMINI_MODEL}:generateContent?key=${apiKey}`;
+        const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                contents: [
+                    { role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }
+                ],
+                generationConfig: {
+                    temperature: temperature ?? this.config.TEMPERATURE,
+                    responseMimeType: "application/json"
+                }
+            })
+        });
+
+        if (!res.ok) {
+            const txt = await res.text();
+            throw new Error(`Gemini ${res.status}: ${txt.slice(0,500)}`);
+        }
+        const data = await res.json();
+        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        if (!raw) throw new Error('Gemini tidak mengembalikan content');
+        return raw;
     },
 
     async callWorker({ systemPrompt, userPrompt, temperature }) {
@@ -47,14 +127,44 @@ const AIModule = {
     },
 
     async generate({ systemPrompt, userPrompt, temperature, parseJson = true }) {
-        const raw = await this.callWorker({ systemPrompt, userPrompt, temperature });
+        let raw = "";
+        let usedFallback = false;
+
+        // === COBA GROQ DULU ===
+        try {
+            raw = await this.callWorker({ systemPrompt, userPrompt, temperature });
+        } catch (groqErr) {
+            console.warn('Groq/Worker gagal:', groqErr.message);
+            
+            // === FALLBACK KE GEMINI JIKA AKTIF ===
+            if (this.config.USE_GEMINI_FALLBACK) {
+                console.log('Fallback ke Gemini...');
+                try {
+                    raw = await this.callGemini({ systemPrompt, userPrompt, temperature });
+                    usedFallback = true;
+                    console.log('✅ Fallback Gemini berhasil');
+                } catch (geminiErr) {
+                    console.error('Gemini fallback juga gagal:', geminiErr.message);
+                    throw new Error(`Groq gagal (${groqErr.message}) & Gemini fallback gagal (${geminiErr.message})`);
+                }
+            } else {
+                throw groqErr;
+            }
+        }
+
         if (!parseJson) return raw;
         try {
-            return JSON.parse(raw);
+            const parsed = JSON.parse(raw);
+            if (usedFallback) parsed._fallback = 'gemini';
+            return parsed;
         } catch (e) {
             const match = raw.match(/\{[\s\S]*\}/);
             if (match) {
-                try { return JSON.parse(match[0]); } catch(e2){}
+                try { 
+                    const parsed = JSON.parse(match[0]);
+                    if (usedFallback) parsed._fallback = 'gemini';
+                    return parsed;
+                } catch(e2){}
             }
             throw new Error('Gagal parse JSON: ' + raw.slice(0,500));
         }
