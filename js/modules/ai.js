@@ -178,7 +178,6 @@ const AIModule = {
             throw new Error('❌ Data produk kosong.\n\nBelum ada produk di database. Tambah produk dulu sebelum scan AI.');
         }
 
-        // === BATAS MINIMAL 100 PCS TERJUAL - CEGAH AI ERROR ===
         const totalSold = summary.salesSummary.totalSoldLast30Days || 0;
         const uniqueSold = summary.salesSummary.uniqueProductsSold || 0;
 
@@ -189,31 +188,28 @@ const AIModule = {
                 `Minimal dibutuhkan: 100 pcs terjual.\n\n` +
                 `Penyebab AI tolak scan:\n` +
                 `- Data produk kosong atau\n` +
-                `- Belum ada data transaksi yang cukup untuk analisa promo\n\n` +
-                `Solusi:\n` +
-                `1. Lakukan transaksi penjualan sampai minimal 100 pcs dalam 30 hari terakhir\n` +
-                `2. Pastikan transaksi tersimpan di laporan\n` +
-                `3. Baru coba scan AI lagi`);
+                `- Belum ada data transaksi yang cukup untuk analisa promo`);
         }
 
         // Prompt yang paksa AI pakai data REAL, bukan ngarang
         const systemPrompt = customPrompt?.system || `Kamu adalah Retail Promotion Strategist Indonesia yang HARUS pakai data penjualan & stok REAL yang diberikan.
 
 ATURAN WAJIB:
-1. JANGAN ngarang product ID - pakai HANYA ID yang ada di data
+1. JANGAN ngarang product ID - pakai HANYA ID yang ada di data, KECUALI type umum boleh tanpa product ID
 2. Analisa lowStock (stok menipis), deadStock (tidak laku >=21 hari), slowMoving (laku <5), bestSellers (laku >=10)
-3. Berikan 5-7 strategi promosi dengan profit minimal 15%
+3. Berikan MAKSIMAL 5 strategi promosi saja dengan profit minimal 15%
 4. Format output JSON MURNI tanpa markdown:
 
 {"strategies":[
-  {"type":"discount|bundling|buyXgetY|tebus_murah|weekend","title":"Judul promo","reason":"Alasan berdasarkan data real: stok X, laku Y, margin Z%","target_product_ids":["id_asli_dari_data"],"config":{"discount":5000,"bundlePrice":25000,"buyProdId":"id1","getProdId":"id2","discountPrice":10000,"targetProdId":"id","buyQty":2,"getQty":1,"prodA":"id1","prodB":"id2","prodId":"id"},"copywriting":"Text WA","predicted_lift":"+15% omzet","urgency":"high|medium|low"}
+  {"type":"discount|bundling|buyXgetY|tebus_murah|weekend|umum","title":"Judul promo","reason":"Alasan berdasarkan data real: stok X, laku Y, margin Z%","target_product_ids":["id_asli_dari_data"],"config":{"discount":5000,"bundlePrice":25000,"buyProdId":"id1","getProdId":"id2","discountPrice":10000,"targetProdId":"id","buyQty":2,"getQty":1,"prodA":"id1","prodB":"id2","prodId":"id","percent":10,"minSpend":50000,"scope":"general","isGeneral":true,"detectOnly":true},"copywriting":"Text WA","predicted_lift":"+15% omzet","urgency":"high|medium|low"}
 ]}
 
 TYPE PENJELASAN:
 - discount/weekend: butuh prodId + discount (potongan harga)
 - tebus_murah: butuh targetProdId + discountPrice (harga tebus) + minSpend
 - bundling: butuh prodA + prodB + bundlePrice
-- buyXgetY: butuh buyProdId + buyQty + getProdId + getQty`;
+- buyXgetY: butuh buyProdId + buyQty + getProdId + getQty
+- umum: promo untuk SEMUA pelanggan tanpa produk spesifik, target_product_ids boleh []`;
 
         const userPrompt = customPrompt?.user || `Goal: ${goal}
 
@@ -233,7 +229,7 @@ TUGAS:
 - slowMoving: ${summary.slowMoving.length} produk laku <5 pcs/30 hari, buat weekend sale atau discount
 - bestSellers: ${summary.bestSellers.length} produk laku >=10 pcs/30 hari, pakai untuk tarik produk lain via buyXgetY atau bundling
 
-Buat 5-7 strategi promosi powerfull dengan profit min 15%. Pakai ID produk ASLI dari data di atas.`;
+Buat MAKSIMAL 5 strategi promosi saja. WAJIB ada 1 promo umum jika memungkinkan. Pakai ID produk ASLI dari data di atas.`;
 
         const result = await this.generate({ systemPrompt, userPrompt });
         const strategies = result.strategies || result.data || [];
@@ -244,10 +240,22 @@ Buat 5-7 strategi promosi powerfull dengan profit min 15%. Pakai ID produk ASLI 
         const allProductIds = new Set((await DB.getProducts()).map(p => String(p.id||p.docId)));
         
         const validatedStrategies = strategies.map(s => {
-            // Filter target_product_ids yang valid
+            const isUmum = (s.type||'').toLowerCase()==='umum' || s.config?.scope==='general' || s.config?.isGeneral;
+            if (isUmum) {
+                s.config = s.config || {};
+                s.config.scope = 'general';
+                s.config.isGeneral = true;
+                s.config.isUmum = true;
+                s.config.detectOnly = true;
+                s.config.autoApply = false;
+                s.config.isMemberOnly = false;
+                s.target_product_ids = s.target_product_ids || [];
+                if (!s.config.percent && !s.config.discount) s.config.percent = 10;
+                s.config.minSpend = Number(s.config.minSpend||50000);
+                return s;
+            }
             const validTargetIds = (s.target_product_ids||[]).filter(id => allProductIds.has(String(id)));
             if (validTargetIds.length === 0 && s.config) {
-                // Coba ambil dari config
                 const cfgIds = [s.config.targetProdId, s.config.prodId, s.config.prodA, s.config.prodB, s.config.buyProdId, s.config.getProdId].filter(Boolean).map(String);
                 const validCfgIds = cfgIds.filter(id => allProductIds.has(id));
                 if (validCfgIds.length > 0) {
@@ -257,13 +265,19 @@ Buat 5-7 strategi promosi powerfull dengan profit min 15%. Pakai ID produk ASLI 
                 s.target_product_ids = validTargetIds;
             }
             return s;
-        }).filter(s => s.target_product_ids && s.target_product_ids.length > 0);
+        }).filter(s => {
+            const isUmum = (s.type||'').toLowerCase()==='umum' || s.config?.scope==='general';
+            if (isUmum) return true;
+            return s.target_product_ids && s.target_product_ids.length > 0;
+        });
 
-        console.log(`AI strategies: ${strategies.length} -> validated: ${validatedStrategies.length}`);
+        // === BATAS MAX 5 HASIL - HEMAT QUOTA ===
+        const limitedStrategies = validatedStrategies.slice(0, 5);
+        console.log(`AI strategies: ${strategies.length} -> validated: ${validatedStrategies.length} -> final: ${limitedStrategies.length} (max 5)`);
 
         return {
             summary,
-            strategies: validatedStrategies
+            strategies: limitedStrategies
         };
     },
 
