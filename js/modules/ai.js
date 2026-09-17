@@ -1,7 +1,7 @@
 import DB from './db.js';
 
 const AI_CONFIG = {
-    WORKER_URL: localStorage.getItem('edc_worker_url') || "https://promo-ai.welybudiprasetya.workers.dev",
+    WORKER_URL: localStorage.getItem('edc_worker_url') || "https://promo-key.welybudiprasetya.workers.dev",
     MODEL: "openai/gpt-oss-120b",
     TEMPERATURE: 0.6,
     // === GEMINI FALLBACK CONFIG ===
@@ -102,71 +102,203 @@ const AIModule = {
         if (!url || url.includes('GANTI')) {
             throw new Error(`WORKER_URL belum diisi`);
         }
-        console.log('AI callWorker to:', url);
+        const groqModel = this.config.MODEL;
+        const geminiModel = this.config.GEMINI_MODEL;
+        
+        console.log(`[AI] Call Groq via Worker: ${groqModel} | Gemini fallback model: ${geminiModel}`);
+        
+        const payload = {
+            model: groqModel,
+            geminiModel: geminiModel, // kirim ke worker untuk dipakai saat fallback via /gemini
+            messages: [
+                { role: "system", content: systemPrompt + "\n\nPENTING: Jawab HANYA JSON valid tanpa markdown, tanpa \\`\\`\\`json. Jika tidak ada promo, jawab {\"strategies\":[]}" },
+                { role: "user", content: userPrompt }
+            ],
+            temperature: temperature ?? this.config.TEMPERATURE,
+            response_format: { type: "json_object" }
+        };
+
         const res = await fetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        const dataText = await res.text();
+        let dataJson = null;
+        try { dataJson = JSON.parse(dataText); } catch(e){}
+
+        if (!res.ok) {
+            // === PENANGANAN LENGKAP ERROR GROQ DI ai.js ===
+            const status = res.status;
+            const errorMap = {
+                400: "BadRequestError - Failed to validate JSON / invalid payload",
+                401: "AuthenticationError - API key invalid/expired",
+                403: "PermissionDeniedError - model tidak diizinkan",
+                404: "NotFoundError - model tidak ditemukan",
+                422: "UnprocessableEntityError - payload error",
+                429: "RateLimitError - quota habis / rate limit",
+                500: "InternalServerError",
+                502: "BadGateway",
+                503: "ServiceUnavailable"
+            };
+            const errType = errorMap[status] || `HTTP ${status}`;
+            const errMsg = dataJson?.error?.message || dataJson?.error || dataText.slice(0,400);
+            const errCode = dataJson?.error?.code || dataJson?.error?.type || '';
+
+            console.error(`[GROQ ERROR ${status}] ${errType} Code:${errCode} Msg:${errMsg}`);
+            console.error(`[GROQ RAW] ${dataText.slice(0,800)}`);
+
+            // Simpan untuk debug (tanpa UI)
+            window._lastAIGroqError = { status, type: errType, code: errCode, message: errMsg, raw: dataText.slice(0,800), timestamp: Date.now() };
+
+            // Lempar error biar di-catch oleh generate() untuk fallback Gemini
+            const err = new Error(`Groq ${status} ${errType}: ${errMsg}`);
+            err.status = status;
+            err.type = errType;
+            err.code = errCode;
+            err.raw = dataText;
+            throw err;
+        }
+
+        // Sukses
+        const content = dataJson?.choices?.[0]?.message?.content || "";
+        if (!content) throw new Error('Worker tidak mengembalikan content');
+        console.log(`[GROQ OK] ${res.status} ${content.length} chars`);
+        return content;
+    },
+
+    async callGemini({ systemPrompt, userPrompt, temperature, model }) {
+        const geminiModel = model || this.config.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+        const useWorker = this.config.WORKER_URL && !this.config.WORKER_URL.includes('GANTI') && this.config.USE_GEMINI_FALLBACK;
+
+        // Jika ada worker, pakai via worker biar key aman
+        if (useWorker && this.config.GEMINI_API_KEY === null) {
+            // Mode key-only: key disimpan di worker, panggil /gemini
+            const workerGeminiUrl = this.config.WORKER_URL.replace(/\/$/, '') + '/gemini';
+            console.log(`[AI] Call Gemini via Worker: ${geminiModel}`);
+            const res = await fetch(workerGeminiUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    systemPrompt, userPrompt,
+                    temperature: temperature ?? this.config.TEMPERATURE,
+                    geminiModel: geminiModel
+                })
+            });
+            const text = await res.text();
+            let json = null;
+            try { json = JSON.parse(text); } catch(e){}
+
+            if (!res.ok) {
+                const errMsg = json?.error?.message || json?.error || text.slice(0,400);
+                console.error(`[GEMINI ERROR ${res.status} via Worker] Model:${geminiModel} Msg:${errMsg}`);
+                window._lastAIGeminiError = { status: res.status, model: geminiModel, message: errMsg, raw: text.slice(0,800), timestamp: Date.now() };
+                const err = new Error(`Gemini ${res.status}: ${errMsg}`);
+                err.status = res.status;
+                throw err;
+            }
+            const raw = json?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+            if (!raw) throw new Error('Gemini via Worker tidak mengembalikan content');
+            console.log(`[GEMINI OK via Worker] ${geminiModel} ${raw.length} chars`);
+            return raw;
+        }
+
+        // Direct call jika ada key di frontend
+        const key = this.config.GEMINI_API_KEY;
+        if (!key) throw new Error('GEMINI_API_KEY belum di-set di worker maupun frontend');
+
+        console.log(`[AI] Call Gemini direct: ${geminiModel}`);
+        const guard = "\n\nPENTING: Jawab HANYA JSON valid tanpa markdown. Jika tidak ada promo, jawab {\"strategies\":[]}";
+        const fullPrompt = systemPrompt ? `${systemPrompt}${guard}\n\n${userPrompt}` : `${guard}\n\n${userPrompt}`;
+
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${key}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                model: this.config.MODEL,
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: userPrompt }
-                ],
-                temperature: temperature ?? this.config.TEMPERATURE,
-                response_format: { type: "json_object" }
+                contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+                generationConfig: { temperature: temperature ?? 0.6, responseMimeType: "application/json" }
             })
         });
-        if (!res.ok) {
-            const txt = await res.text();
-            throw new Error(`Worker ${res.status}: ${txt.slice(0,500)}`);
-        }
         const data = await res.json();
-        const raw = data.choices?.[0]?.message?.content || "";
-        if (!raw) throw new Error('Worker tidak mengembalikan content');
+        if (!res.ok) {
+            const errMsg = data.error?.message || JSON.stringify(data).slice(0,400);
+            console.error(`[GEMINI ERROR ${res.status} direct] Model:${geminiModel} Msg:${errMsg}`);
+            window._lastAIGeminiError = { status: res.status, model: geminiModel, message: errMsg, raw: JSON.stringify(data).slice(0,800), timestamp: Date.now() };
+            throw new Error(`Gemini ${res.status}: ${errMsg}`);
+        }
+        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        if (!raw) throw new Error('Gemini tidak mengembalikan content');
+        console.log(`[GEMINI OK direct] ${geminiModel} ${raw.length} chars`);
         return raw;
     },
 
-    async generate({ systemPrompt, userPrompt, temperature, parseJson = true }) {
+        async generate({ systemPrompt, userPrompt, temperature, parseJson = true }) {
         let raw = "";
         let usedFallback = false;
+        let lastError = null;
+
+        // === GUARD: paksa JSON murni, tanpa markdown - cegah Worker 400 ===
+        const jsonGuard = "\n\nPENTING: Jawab HANYA JSON valid, tanpa \\`\\`\\` , tanpa penjelasan. Contoh: {\"strategies\":[]}";
 
         // === COBA GROQ DULU ===
         try {
-            raw = await this.callWorker({ systemPrompt, userPrompt, temperature });
+            raw = await this.callWorker({ systemPrompt: systemPrompt + jsonGuard, userPrompt, temperature });
         } catch (groqErr) {
             console.warn('Groq/Worker gagal:', groqErr.message);
+            lastError = groqErr;
             
-            // === FALLBACK KE GEMINI JIKA AKTIF ===
+            // Jika 400 JSON validation error, langsung coba Gemini fallback
             if (this.config.USE_GEMINI_FALLBACK) {
-                console.log('Fallback ke Gemini...');
+                console.log('Fallback ke Gemini karena Groq 400...');
                 try {
-                    raw = await this.callGemini({ systemPrompt, userPrompt, temperature });
+                    raw = await this.callGemini({ systemPrompt: systemPrompt + jsonGuard, userPrompt, temperature });
                     usedFallback = true;
                     console.log('✅ Fallback Gemini berhasil');
                 } catch (geminiErr) {
                     console.error('Gemini fallback juga gagal:', geminiErr.message);
-                    throw new Error(`Groq gagal (${groqErr.message}) & Gemini fallback gagal (${geminiErr.message})`);
+                    throw new Error(`Pengambilan data AI gagal: Groq ${groqErr.message.slice(0,150)} | Gemini ${geminiErr.message.slice(0,150)}`);
                 }
             } else {
-                throw groqErr;
+                throw new Error(`Pengambilan data AI gagal: ${groqErr.message.slice(0,200)}`);
             }
         }
 
         if (!parseJson) return raw;
+        
+        // Coba parse JSON dengan pembersihan
         try {
-            const parsed = JSON.parse(raw);
+            let cleaned = raw.trim();
+            // Hapus markdown code block jika ada
+            if (cleaned.startsWith('```')) {
+                cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+            }
+            const parsed = JSON.parse(cleaned);
             if (usedFallback) parsed._fallback = 'gemini';
+            // Pastikan strategies ada, kalau tidak, anggap kosong bukan error
+            if (!parsed.strategies && !parsed.data) {
+                console.warn('AI return JSON tanpa strategies, anggap kosong');
+                return { strategies: [], _empty: true, _raw: cleaned.slice(0,200) };
+            }
             return parsed;
         } catch (e) {
+            // Coba extract JSON object dari dalam text
             const match = raw.match(/\{[\s\S]*\}/);
             if (match) {
                 try { 
                     const parsed = JSON.parse(match[0]);
                     if (usedFallback) parsed._fallback = 'gemini';
+                    if (!parsed.strategies && !parsed.data) {
+                        return { strategies: [], _empty: true };
+                    }
                     return parsed;
-                } catch(e2){}
+                } catch(e2){
+                    console.warn('Extract JSON gagal', e2.message);
+                }
             }
-            throw new Error('Gagal parse JSON: ' + raw.slice(0,500));
+            // Jika tetap gagal parse, jangan throw 400 lagi - return kosong dengan flag error untuk notif
+            console.error('Gagal parse JSON AI, return kosong untuk notif:', raw.slice(0,500));
+            throw new Error('Pengambilan data AI gagal: Format JSON tidak valid dari AI. Coba lagi.');
         }
     },
 
@@ -399,7 +531,23 @@ Buat MAKSIMAL 5 strategi promosi saja. WAJIB ada 1 promo umum jika memungkinkan.
         }
 
         const member = memberSummary.member;
+        // === PASTIKAN REQUEST TIDAK KOSONG ===
+        if (!memberSummary || !memberSummary.member) {
+            throw new Error('Member tidak valid - scan member dulu');
+        }
+        // Pastikan tokoSummary ada isinya minimal 1 array biar prompt tidak kosong
+        const safeTokoSummary = {
+            deadStock: (tokoSummary?.deadStock||[]).length ? tokoSummary.deadStock : [{name:'Stok umum', id:'general'}],
+            bestSellers: (tokoSummary?.bestSellers||[]).length ? tokoSummary.bestSellers : [{name:'Produk terlaris', id:'general'}],
+            lowStock: tokoSummary?.lowStock||[],
+            slowMoving: tokoSummary?.slowMoving||[]
+        };
+
         const allProductIds = new Set((await DB.getProducts()).map(p => String(p.id||p.docId)));
+        if (allProductIds.size === 0) {
+            console.warn('Produk kosong, pakai ID general agar request tidak kosong');
+            allProductIds.add('general');
+        }
 
         // Siapkan data untuk prompt
         const systemPrompt = `Kamu adalah CRM Retail Strategist Indonesia yang ahli bikin promo member personalized.
@@ -440,10 +588,10 @@ ${JSON.stringify({
 
 TOKO DATA REAL (untuk cari produk yang cocok):
 ${JSON.stringify({
-            deadStock: (tokoSummary?.deadStock||[]).slice(0,5),
-            bestSellers: (tokoSummary?.bestSellers||[]).slice(0,5),
-            lowStock: (tokoSummary?.lowStock||[]).slice(0,5),
-            slowMoving: (tokoSummary?.slowMoving||[]).slice(0,5)
+            deadStock: (safeTokoSummary?.deadStock||[]).slice(0,5),
+            bestSellers: (safeTokoSummary?.bestSellers||[]).slice(0,5),
+            lowStock: (safeTokoSummary?.lowStock||[]).slice(0,5),
+            slowMoving: (safeTokoSummary?.slowMoving||[]).slice(0,5)
         }, null, 2)}
 
 CART SAAT INI:
@@ -482,10 +630,20 @@ Goal: ${goal}`;
 
         console.log(`AI Member strategies: ${strategies.length} -> validated: ${validated.length}`);
 
+        // === VALIDASI MAX 3 HASIL UNTUK MEMBER (hemat quota) ===
+        const limitedMember = validated.slice(0, 3);
+        console.log(`AI Member final: ${validated.length} -> max 3: ${limitedMember.length}`);
+
+        // === PASTIKAN REQUEST TIDAK KOSONG AGAR TIDAK ERROR GROQ/GEMINI ===
+        if (limitedMember.length === 0) {
+            console.warn('AI member tidak menghasilkan promo - akan tampil notif di transaksi, bukan error');
+        }
+
         return {
             memberSummary,
             tokoSummary,
-            strategies: validated
+            strategies: limitedMember,
+            _isEmpty: limitedMember.length === 0
         };
     },
 

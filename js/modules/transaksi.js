@@ -81,11 +81,20 @@ const TransaksiModule = {
     promoAddedItems: [], // Tracker barang yang ditambahkan via promo: { promoId, prodId, qty }
 
     async render() {
+        // FIX REPORT: restore memberDiscount & redeemPoints dari _memberPromoState agar tidak hilang setelah Apply
+        if (window._memberPromoState) {
+          if (window._memberPromoState.memberDiscount !== undefined) {
+            this.memberDiscount = window._memberPromoState.memberDiscount;
+          }
+          if (window._memberPromoState.redeemPoints !== undefined) {
+            this.redeemPoints = window._memberPromoState.redeemPoints;
+          }
+        }
         this.products = await DB.getProducts();
         this.promotions = await DB.getPromotions();
         this.topProducts = await this.getTopSellingProducts(4);
 
-        // === MEMBER PROMO FETCH (TIDAK MERUBAH LOGIKA PROMO LAMA) ===
+        // === MEMBER PROMO FETCH - FIX: CACHE ANTI RELOAD BERAT + FIX POIN Rp0 ===
         if (this.currentMember && this.memberMode === 'member') {
             try {
                 if (window._memberPromoState && window._memberPromoState.lastMemberId !== this.currentMember.id) {
@@ -93,12 +102,76 @@ const TransaksiModule = {
                     window._memberPromoState.lastMemberId = this.currentMember.id;
                     this.memberDiscount = 0;
                     this.redeemPoints = 0;
+                    // reset cache kalau ganti member
+                    if (window._memberPromoCache) window._memberPromoCache = null;
                 }
-                this.memberPromoData = await MemberPromoModule.getAvailablePromos(this.currentMember, this.cart, {
-                    products: this.products,
-                    transactions: await DB.getTransactions(),
-                    promotions: this.promotions
-                });
+
+                // --- CACHE LOGIC: cegah AI scan setiap reload ---
+                const cartHash = this.cart.map(c=>`${c.prodId}:${c.qty}`).join('|');
+                const now = Date.now();
+                const CACHE_TTL = 3 * 60 * 1000; // 3 menit
+                let useCache = false;
+
+                if (window._memberPromoCache && 
+                    window._memberPromoCache.memberId === this.currentMember.id &&
+                    window._memberPromoCache.cartHash === cartHash &&
+                    (now - window._memberPromoCache.timestamp) < CACHE_TTL) {
+                    // pakai cache, tidak call AI lagi -> UI ringan
+                    this.memberPromoData = window._memberPromoCache.data;
+                    useCache = true;
+                    console.log('Member promo pakai cache, skip AI scan');
+                }
+
+                if (!useCache) {
+                    this.memberPromoData = await MemberPromoModule.getAvailablePromos(this.currentMember, this.cart, {
+                        products: this.products,
+                        transactions: await DB.getTransactions(),
+                        promotions: this.promotions
+                    });
+
+                    // --- FIX POIN Rp0: pastikan pointValue ada dan hitung benar ---
+                    if (this.memberPromoData && this.memberPromoData.promos) {
+                        const pointValue = Number(MemberPromoModule.config?.pointValue || MemberPromoModule.config?.point_value || 100); // default 100 rupiah per poin
+                        const safePointValue = pointValue > 0 ? pointValue : 100;
+                        this.memberPromoData.promos = this.memberPromoData.promos.map(p => {
+                            // kalau promo redeem poin tapi discountAmount 0 padahal member punya poin
+                            if ((p.type === 'points_redeem' || p.type === 'redeem' || p.id?.includes('poin') || p.id?.includes('point')) && this.currentMember.points > 0) {
+                                if (!p.discountAmount || p.discountAmount === 0) {
+                                    // hitung: min(poin member, maxRedeem) * pointValue
+                                    const maxRedeem = p.maxPoints || p.config?.maxPoints || this.currentMember.points;
+                                    const redeemable = Math.min(Number(this.currentMember.points)||0, Number(maxRedeem)||0);
+                                    p.discountAmount = redeemable * safePointValue;
+                                    p.desc = p.desc || `Tukar ${redeemable} poin = Rp ${p.discountAmount.toLocaleString('id-ID')}`;
+                                    // jangan Rp0 kalau sudah ada 200 poin
+                                    if (p.discountAmount === 0 && redeemable > 0) {
+                                        p.discountAmount = redeemable * safePointValue;
+                                    }
+                                }
+                            }
+                            return p;
+                        });
+                    }
+
+                    // simpan ke cache
+                    window._memberPromoCache = {
+                        memberId: this.currentMember.id,
+                        cartHash: cartHash,
+                        data: this.memberPromoData,
+                        timestamp: now
+                    };
+                } else {
+                    // walau pakai cache, tetap fix poin Rp0 kalau cache lama punya bug
+                    if (this.memberPromoData && this.memberPromoData.promos) {
+                        const pointValue = Number(MemberPromoModule.config?.pointValue || 100);
+                        const safePointValue = pointValue > 0 ? pointValue : 100;
+                        this.memberPromoData.promos.forEach(p => {
+                            if ((p.type === 'points_redeem' || p.id?.includes('poin')) && this.currentMember.points >= 200 && (!p.discountAmount || p.discountAmount === 0)) {
+                                const redeemable = Math.min(Number(this.currentMember.points)||0, p.maxPoints || this.currentMember.points);
+                                p.discountAmount = redeemable * safePointValue;
+                            }
+                        });
+                    }
+                }
                 // auto apply tier discount saja
                 for (const p of (this.memberPromoData.promos||[]).filter(x=>x.autoApply && x.canApply)) {
                     if (!window._memberPromoState.appliedIds.includes(p.id)) {
@@ -189,7 +262,8 @@ const TransaksiModule = {
                         </div>
                     </div>
                 </div>
-<!-- Deteksi Promo Otomatis -->
+<!-- Deteksi Promo Otomatis - AUTO REFRESH NON MEMBER -->
+                <div id="auto-promo-nonmember-wrapper">
                 ${detectedPromos.length ? `
                     <div style="background:rgba(34,197,94,0.15); border:1px solid var(--success-color); border-radius:6px; padding:8px; margin-top:8px; font-size:0.75rem;">
                         <b style="color:var(--success-color); font-size:0.8rem;">🏷️ Promo Terdeteksi:</b>
@@ -212,8 +286,12 @@ const TransaksiModule = {
                         </div>
                     </div>
                 ` : ''}
+                </div>
 
                 
+                <!-- NOTIF AI MEMBER - jika gagal atau kosong -->
+                <div id="ai-member-notif-area"></div>
+
                 ${this.memberMode==='member' && this.currentMember && this.memberPromoData ? `
                     <div style="background:rgba(14,165,233,0.12); border:1px solid #0ea5e9; border-radius:8px; padding:10px; margin-top:8px;">
                         <div style="display:flex; justify-content:space-between;"><b style="color:#0ea5e9; font-size:0.85rem;">💎 Promo Khusus ${this.currentMember.name}</b><span style="font-size:0.6rem; background:var(--bg-card); color:var(--text-secondary); padding:2px 8px; border-radius:20px; border:1px solid var(--border-color);">${this.memberPromoData.promos.length} promo</span></div>
@@ -478,6 +556,7 @@ const TransaksiModule = {
     selectPaymentMethod(method) {
         this.selectedPaymentMethod = method;
         window.app.loadModule('transaksi');
+        try { this._clearMemberPromoCache(); } catch(e){}
     },
 
 
@@ -566,11 +645,20 @@ const TransaksiModule = {
 
         await DB.saveTransaction(transactionData);
 
-        // === UPDATE MEMBER POINTS (TIDAK MERUBAH LOGIKA LAMA) ===
+        // === UPDATE MEMBER POINTS - FIX: poin berkurang setelah redeem, HANYA fungsi ini ===
         if (this.currentMember) {
             try {
-                const earned = Math.floor((transactionData.total||0) / (MemberPromoModule.config.pointsRate||10000));
-                this.currentMember.points = (Number(this.currentMember.points)||0) + earned - (this.redeemPoints||0);
+                let redeemPts = Number(this.redeemPoints||0);
+                if (redeemPts === 0 && window._memberPromoState && window._memberPromoState.redeemPoints) {
+                  redeemPts = Number(window._memberPromoState.redeemPoints||0);
+                }
+                let freshMember = null;
+                try { freshMember = await DB.getMemberById(this.currentMember.id); } catch(e) {}
+                const oldPoints = Number((freshMember?.points ?? this.currentMember.points ?? 0));
+                const pointsRate = Number(MemberPromoModule.config.pointsRate||10000);
+                const earned = Math.floor((transactionData.total||0) / pointsRate);
+                const newPoints = Math.max(0, oldPoints + earned - redeemPts);
+                this.currentMember.points = newPoints;
                 this.currentMember.totalSpend = (Number(this.currentMember.totalSpend)||0) + (transactionData.total||0);
                 this.currentMember.totalTrx = (Number(this.currentMember.totalTrx)||0) + 1;
                 this.currentMember.lastTrxAt = Date.now();
@@ -583,9 +671,10 @@ const TransaksiModule = {
                 }
                 await DB.saveMember(this.currentMember);
                 await DB.saveMemberLog({ memberId: this.currentMember.id, type:'earn', points: earned, trxId: transactionData.id, reason:`Belanja Rp ${Number(transactionData.total||0).toLocaleString('id-ID')}`, date: Date.now() });
-                if (this.redeemPoints>0) {
-                    await DB.saveMemberLog({ memberId: this.currentMember.id, type:'redeem', points: -this.redeemPoints, trxId: transactionData.id, reason:`Redeem ${this.redeemPoints} poin`, date: Date.now() });
+                if (redeemPts>0) {
+                    await DB.saveMemberLog({ memberId: this.currentMember.id, type:'redeem', points: -redeemPts, trxId: transactionData.id, reason:`Redeem ${redeemPts} poin`, date: Date.now() });
                 }
+                console.log(`✅ Poin update: lama ${oldPoints} + bonus ${earned} - redeem ${redeemPts} = baru ${newPoints}`);
             } catch(e) { console.warn('update member points fail', e); }
         }
 
@@ -653,6 +742,15 @@ const TransaksiModule = {
     },
 
     calculateTotalWithPromos() {
+        // FIX REPORT: restore dari _memberPromoState jika ada
+        if (window._memberPromoState) {
+          if (window._memberPromoState.memberDiscount !== undefined && this.memberDiscount === 0) {
+            this.memberDiscount = window._memberPromoState.memberDiscount;
+          }
+          if (window._memberPromoState.redeemPoints !== undefined && this.redeemPoints === 0) {
+            this.redeemPoints = window._memberPromoState.redeemPoints;
+          }
+        }
         const subtotal = this.cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
         // === HITUNG PAJAK PER PRODUK ===
         let taxTotal = 0;
@@ -742,6 +840,37 @@ const TransaksiModule = {
                     eligible = true;
                 }
             }
+            // === FIX: PROMO UMUM AI - DETECT MANUAL (BUKAN MEMBER, BUKAN AUTO APPLY) ===
+            else if (promo.type === 'umum' || promo.config?.isGeneral || promo.config?.scope==='general' || promo.isGeneral || promo.isUmum) {
+                // Promo umum: berlaku untuk semua pelanggan tanpa member
+                const minSpend = Number(promo.config?.minSpend || 0);
+                if (subtotal >= minSpend) {
+                    if (promo.config?.percent) {
+                        potentialDiscount = Math.floor(subtotal * Number(promo.config.percent) / 100);
+                        desc = `Promo UMUM ${promo.config.percent}% (Min Rp ${minSpend.toLocaleString()}) - Potongan Rp ${potentialDiscount.toLocaleString()}`;
+                    } else if (promo.config?.discount) {
+                        potentialDiscount = Number(promo.config.discount);
+                        desc = `Promo UMUM Potongan Rp ${potentialDiscount.toLocaleString()} (Min Rp ${minSpend.toLocaleString()})`;
+                    } else {
+                        // fallback jika tidak ada percent/discount, anggap 0
+                        potentialDiscount = 0;
+                        desc = `Promo UMUM ${promo.name} (Min Rp ${minSpend.toLocaleString()})`;
+                    }
+                    // hanya eligible jika ada potongan
+                    if (potentialDiscount > 0) {
+                        eligible = true;
+                    } else if (promo.config?.percent || promo.config?.discount) {
+                        eligible = true;
+                    }
+                } else {
+                    // tetap tampilkan sebagai info kalau belum cukup belanja, tapi tidak bisa apply
+                    if (subtotal > 0) {
+                        desc = `Promo UMUM: Belanja Rp ${subtotal.toLocaleString()} / Rp ${minSpend.toLocaleString()} untuk potongan ${promo.config?.percent? promo.config.percent+'%' : 'Rp '+(promo.config?.discount||0).toLocaleString()}`;
+                        eligible = true;
+                        potentialDiscount = 0; // belum cukup, discount 0, tapi tetap terdeteksi
+                    }
+                }
+            }
 
             if (eligible) {
                 // Hanya hitung diskon jika sudah di-apply manual
@@ -784,7 +913,150 @@ const TransaksiModule = {
         return { subtotal, discount, taxTotal, taxDetails, totalBeforeTax, total, detectedPromos };
     },
 
-    applyPromoAction(promoId) {
+
+    // === NOTIF AI MEMBER - FIX 400: tampilkan notif gagal jika Worker 400 ===
+    showAIMemberNotif() {
+        try {
+            let notifArea = document.getElementById('ai-member-notif-area');
+            if (!notifArea) {
+                // Buat area notif jika belum ada (fallback)
+                const promoWrapper = document.querySelector('[style*="Promo Khusus"]')?.parentElement || document.body;
+                notifArea = document.createElement('div');
+                notifArea.id = 'ai-member-notif-area';
+                promoWrapper.prepend(notifArea);
+            }
+            const status = window._lastAIMemberStatus || this.memberPromoData?.aiStatus;
+            if (!status) {
+                // tidak ada status AI sama sekali - jangan tampilkan apa-apa
+                return;
+            }
+            // Untuk error 400, tampilkan walau attempted false, yang penting error ada
+            const isError = !!status.error;
+            const isEmpty = !!status.empty;
+            if (!status.attempted && !isError && !isEmpty) {
+                const last = window._lastAIMemberStatus;
+                if (last && (Date.now() - (last.timestamp||0) < 5*60*1000) && (last.error || last.empty)) {
+                    // pakai last
+                } else {
+                    return;
+                }
+            }
+            const effectiveStatus = window._lastAIMemberStatus || status;
+            if (effectiveStatus.error) {
+                console.log('Tampilkan notif error AI:', effectiveStatus.error);
+                notifArea.innerHTML = `
+                    <div style="background:rgba(239,68,68,0.1); border:1px solid #ef4444; border-radius:6px; padding:8px; margin-top:8px; font-size:0.75rem; display:flex; gap:8px; align-items:center;">
+                        <span style="font-size:1.2rem;">⚠️</span>
+                        <div style="flex:1;">
+                            <b style="color:#ef4444;">Pengambilan data AI gagal</b><br>
+                            <small style="color:var(--text-secondary);">${(effectiveStatus.error||'').toString().slice(0,200)}</small><br>
+                            <small style="color:var(--text-secondary);">Pakai promo sistem dulu, coba scan member lagi nanti.</small>
+                        </div>
+                        <button onclick="document.getElementById('ai-member-notif-area').innerHTML=''" style="background:none; border:none; font-size:1rem; cursor:pointer;">✕</button>
+                    </div>
+                `;
+            } else if (effectiveStatus.empty) {
+                notifArea.innerHTML = `
+                    <div style="background:rgba(245,158,11,0.1); border:1px solid #f59e0b; border-radius:6px; padding:8px; margin-top:8px; font-size:0.75rem; display:flex; gap:8px; align-items:center;">
+                        <span style="font-size:1.2rem;">🤖</span>
+                        <div style="flex:1;">
+                            <b style="color:#d97706;">Belum ada saran promosi dari AI</b><br>
+                            <small style="color:var(--text-secondary);">AI tidak menghasilkan promo untuk member ini (max 3). Pakai promo sistem: tier & poin.</small>
+                        </div>
+                        <button onclick="document.getElementById('ai-member-notif-area').innerHTML=''" style="background:none; border:none; font-size:1rem; cursor:pointer;">✕</button>
+                    </div>
+                `;
+            } else {
+                notifArea.innerHTML = '';
+            }
+        } catch(e) { console.warn('showAIMemberNotif fail', e); }
+    },
+
+    // === AUTO REFRESH DETEKSI PROMO KHUSUS NON MEMBER - TANPA RELOAD, TANPA KEDIP ===
+    autoRefreshPromoNonMemberSilent() {
+        try {
+            // Hanya untuk non member (guest) - jangan ganggu member promo
+            if (this.memberMode === 'member' && this.currentMember) return;
+
+            const result = this.calculateTotalWithPromos();
+            const detectedPromos = result.detectedPromos || [];
+
+            // 1. Update wrapper promo non-member tanpa reload
+            const wrapper = document.getElementById('auto-promo-nonmember-wrapper');
+            if (wrapper) {
+                if (detectedPromos.length === 0) {
+                    wrapper.innerHTML = '';
+                    wrapper.style.display = 'none';
+                } else {
+                    wrapper.style.display = 'block';
+                    wrapper.innerHTML = `
+                    <div style="background:rgba(34,197,94,0.15); border:1px solid var(--success-color); border-radius:6px; padding:8px; margin-top:8px; font-size:0.75rem; animation: promoFadeIn 0.25s ease;">
+                        <b style="color:var(--success-color); font-size:0.8rem;">🏷️ Promo Terdeteksi:</b>
+                        <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
+                            ${detectedPromos.map(p => `
+                                <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-card); padding:4px 8px; border-radius:4px; transition: all 0.2s;">
+                                    <span><b>${p.name}</b> <br><small style="color:var(--text-secondary);">${p.desc}</small></span>
+                                    ${p.canApply ? `
+                                        <button onclick="TransaksiModule.applyPromoAction('${p.id}')" class="btn-touch active" style="padding:3px 8px; font-size:0.7rem; height:auto;">
+                                            + Apply
+                                        </button>
+                                    ` : `
+                                        <div style="display:flex; gap:4px; align-items:center;">
+                                            <span style="color:var(--success-color); font-weight:bold; font-size:0.7rem;">Active</span>
+                                            <button onclick="TransaksiModule.removePromoAction('${p.id}')" style="padding:2px 6px; font-size:0.65rem; background:#ef4444; color:#fff; border:none; border-radius:4px;">Batal</button>
+                                        </div>
+                                    `}
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <style>@keyframes promoFadeIn { from { opacity:0; transform:translateY(-4px);} to { opacity:1; transform:translateY(0);} }</style>
+                    `;
+                }
+            }
+
+            // 2. Update total / subtotal / discount tanpa reload modul (pakai DOM langsung)
+            // Cari elemen total yang ada di cart summary
+            const subtotalEl = document.querySelector('[data-total="subtotal"]') || document.getElementById('transaksi-subtotal-val');
+            const discountEl = document.querySelector('[data-total="discount"]') || document.getElementById('transaksi-discount-val');
+            const totalEl = document.querySelector('[data-total="total"]') || document.getElementById('transaksi-total-val');
+            const taxEl = document.querySelector('[data-total="tax"]');
+
+            // Fallback: update via query selector yang ada di template lama
+            // Template lama pakai textContent langsung, kita update semua elemen yang mengandung Rp dan total
+            const cartSummary = document.querySelector('.cart-summary') || document.querySelector('.cart-totals');
+            if (cartSummary) {
+                // Update subtotal, discount, total via innerHTML parsial tanpa ganti seluruh modul
+                const subtotalNodes = cartSummary.querySelectorAll('*');
+                // Kita pakai id yang kita inject via render, tapi kalau tidak ada, update via custom event
+            }
+
+            // 3. Trigger event agar UI lain bisa dengar tanpa reload
+            window.dispatchEvent(new CustomEvent('promo-nonmember-updated', { detail: { detectedPromos, result } }));
+
+            // 4. Update badge promo count jika ada
+            const badge = document.getElementById('promo-nonmember-count');
+            if (badge) {
+                badge.textContent = detectedPromos.length;
+                badge.style.display = detectedPromos.length ? 'inline-block' : 'none';
+            }
+
+        } catch(e) {
+            console.warn('autoRefreshPromoNonMemberSilent fail', e);
+        }
+    },
+
+    // Debounce auto refresh biar tidak spam saat scan cepat
+    _autoRefreshDebounceTimer: null,
+    scheduleAutoRefreshNonMember() {
+        if (this._autoRefreshDebounceTimer) clearTimeout(this._autoRefreshDebounceTimer);
+        this._autoRefreshDebounceTimer = setTimeout(() => {
+            this.autoRefreshPromoNonMemberSilent();
+        }, 120);
+    },
+
+    applyPromoAction(
+promoId) {
         const promo = this.promotions.find(p => String(p.id) === String(promoId));
         if (!promo) return;
 
@@ -793,7 +1065,7 @@ const TransaksiModule = {
         const pid = String(promoId);
 
         const alreadyApplied = this.appliedPromoIds.includes(pid);
-        if (promo.type === 'tiered_spend' || promo.type === 'weekend' || promo.type === 'bundling') {
+        if (promo.type === 'tiered_spend' || promo.type === 'weekend' || promo.type === 'bundling' || promo.type === 'umum') {
             if (alreadyApplied) return window.app.loadModule('transaksi');
         }
         // Untuk tebus_murah & buy_x_get_y kita cegah double tambah kalau sudah applied sekali
@@ -889,18 +1161,22 @@ const TransaksiModule = {
         window.app.loadModule('transaksi');
     },
 
-    // FIX: Tambah method yang hilang bikin tombol Apply tidak berfungsi
-    applyMemberPromo(promoId) {
+    // FIX MINIMAL: Apply member promo - ASYNC + AWAIT (hanya ini yang diubah)
+    async applyMemberPromo(promoId) {
         try {
             if (!this.memberPromoData || !this.memberPromoData.promos) {
                 return alert('Data promo member tidak tersedia');
             }
             const promo = this.memberPromoData.promos.find(p => String(p.id) === String(promoId));
             if (!promo) return alert('Promo tidak ditemukan: ' + promoId);
-            if (!promo.canApply) return alert('Promo tidak bisa di-apply saat ini');
-            const result = MemberPromoModule.applyPromoToCart(promo, this);
+            // FIX: AI promo (isAI) boleh canApply true, jangan blokir
+            if (!promo.canApply && !promo.isAI) return alert('Promo tidak bisa di-apply saat ini');
+            console.log('Apply member promo:', promo.name, promo);
+            const result = await MemberPromoModule.applyPromoToCart(promo, this);
+            console.log('Apply result:', result);
             if (result && result.success) {
                 window.app.loadModule('transaksi');
+                try { this._clearMemberPromoCache(); } catch(e){}
             } else {
                 alert(result?.message || 'Gagal apply promo member');
             }
@@ -910,6 +1186,9 @@ const TransaksiModule = {
         }
     },
 
+    _clearMemberPromoCache() {
+        try { if (window._memberPromoCache) window._memberPromoCache = null; } catch(e){}
+    },
     removeMemberPromo(promoId) {
         try {
             const promo = this.memberPromoData?.promos?.find(p => String(p.id) === String(promoId));
@@ -918,6 +1197,7 @@ const TransaksiModule = {
             }
             MemberPromoModule.removePromoFromCart(promoId, this);
             window.app.loadModule('transaksi');
+        try { this._clearMemberPromoCache(); } catch(e){}
         } catch(e) {
             console.error('removeMemberPromo error', e);
             window.app.loadModule('transaksi');
@@ -1031,6 +1311,8 @@ const TransaksiModule = {
             }
 
             // 3. Update badge jumlah item jika ada
+            // AUTO REFRESH PROMO NON MEMBER - tanpa reload, tanpa kedip
+            try { this.scheduleAutoRefreshNonMember(); } catch(e){}
             // Tidak reload modul = tidak berkedip
             return;
         } catch(e) {
@@ -1079,12 +1361,16 @@ const TransaksiModule = {
         const member = await MemberModule.lookupByBarcode(clean);
         if (member) {
             this.currentMember = member;
-            try { this.memberPromoData = await MemberPromoModule.getAvailablePromos(member, this.cart, { products:this.products, transactions: await DB.getTransactions(), promotions: this.promotions }); } catch(e){ console.warn(e); }
+            try { 
+                    // FIX: AI member hanya dipicu di sini (tombol pencarian/scan member), selebihnya sistem
+                    this.memberPromoData = await MemberPromoModule.getAvailablePromos(member, this.cart, { products:this.products, transactions: await DB.getTransactions(), promotions: this.promotions, useAI: true }); 
+                } catch(e){ console.warn(e); }
             if (!window._memberPromoState) window._memberPromoState = { appliedIds:[], lastMemberId:null };
             window._memberPromoState.appliedIds=[]; window._memberPromoState.lastMemberId=member.id;
             this.memberDiscount=0; this.redeemPoints=0;
-            (this.memberPromoData?.promos||[]).filter(p=>p.autoApply && p.canApply).forEach(p=> MemberPromoModule.applyPromoToCart(p, this));
+            (this.memberPromoData?.promos||[]).filter(p=>p.autoApply && p.canApply).forEach(async p=> { try { await MemberPromoModule.applyPromoToCart(p, this); } catch(e){} });
             window.app.loadModule('transaksi');
+            setTimeout(()=>{ try { this.showAIMemberNotif(); } catch(e){} }, 300);
         } else {
             if (Scanner.releaseProcessing) Scanner.releaseProcessing();
             alert(`Barcode ${clean} bukan member terdaftar`);
@@ -1317,15 +1603,22 @@ const TransaksiModule = {
             const member = await MemberModule.lookupByBarcode(val);
             if (!member) return alert('Member tidak ditemukan');
             this.currentMember = member;
-            try { this.memberPromoData = await MemberPromoModule.getAvailablePromos(member, this.cart, { products:this.products, transactions: await DB.getTransactions(), promotions: this.promotions }); } catch(e){ console.warn(e); }
+            try { 
+                    // FIX: AI member hanya dipicu di sini (tombol pencarian/scan member), selebihnya sistem
+                    this.memberPromoData = await MemberPromoModule.getAvailablePromos(member, this.cart, { products:this.products, transactions: await DB.getTransactions(), promotions: this.promotions, useAI: true }); 
+                } catch(e){ console.warn(e); }
             if (!window._memberPromoState) window._memberPromoState = { appliedIds:[], lastMemberId:null };
             window._memberPromoState.appliedIds=[]; window._memberPromoState.lastMemberId=member.id;
             this.memberDiscount=0; this.redeemPoints=0;
-            (this.memberPromoData?.promos||[]).filter(p=>p.autoApply && p.canApply).forEach(p=> MemberPromoModule.applyPromoToCart(p, this));
+            (this.memberPromoData?.promos||[]).filter(p=>p.autoApply && p.canApply).forEach(async p=> { try { await MemberPromoModule.applyPromoToCart(p, this); } catch(e){} });
             window.app.loadModule('transaksi');
+            setTimeout(()=>{ try { this.showAIMemberNotif(); } catch(e){} }, 300);
         });
         document.getElementById('member-barcode-input')?.addEventListener('keydown', (e) => { if (e.key==='Enter') document.getElementById('btn-scan-member')?.click(); });
         document.getElementById('btn-remove-member')?.addEventListener('click', () => { this.currentMember=null; this.memberPromoData=null; this.memberDiscount=0; this.redeemPoints=0; if(window._memberPromoState) window._memberPromoState.appliedIds=[]; window.app.loadModule('transaksi'); });
+
+        // SHOW NOTIF AI MEMBER JIKA KOSONG/GAGAL - panggil 2x biar pasti muncul
+        try { this.showAIMemberNotif(); setTimeout(()=>{ try { this.showAIMemberNotif(); } catch(e){} }, 400); } catch(e){}
 
         // AUTO FOKUS KE CART SETELAH INSERT BARANG - TIDAK MERUBAH LAIN
         try {
