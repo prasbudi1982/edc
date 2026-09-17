@@ -175,11 +175,25 @@ const AIModule = {
         const summary = await this.getProductsSummary();
 
         if (summary.totalProducts === 0) {
-            throw new Error('Tidak ada produk di database. Tambah produk dulu.');
+            throw new Error('❌ Data produk kosong.\n\nBelum ada produk di database. Tambah produk dulu sebelum scan AI.');
         }
 
-        if (summary.salesSummary.totalSoldLast30Days === 0) {
-            console.warn('Tidak ada penjualan 30 hari terakhir, pakai data stok saja');
+        // === BATAS MINIMAL 100 PCS TERJUAL - CEGAH AI ERROR ===
+        const totalSold = summary.salesSummary.totalSoldLast30Days || 0;
+        const uniqueSold = summary.salesSummary.uniqueProductsSold || 0;
+
+        if (totalSold < 100) {
+            throw new Error(`⚠️ Data transaksi belum cukup untuk generate AI.\n\n` +
+                `AI menolak scan karena data penjualan 30 hari terakhir belum memenuhi minimal.\n` +
+                `Saat ini: ${totalSold} pcs terjual (${uniqueSold} produk unik).\n` +
+                `Minimal dibutuhkan: 100 pcs terjual.\n\n` +
+                `Penyebab AI tolak scan:\n` +
+                `- Data produk kosong atau\n` +
+                `- Belum ada data transaksi yang cukup untuk analisa promo\n\n` +
+                `Solusi:\n` +
+                `1. Lakukan transaksi penjualan sampai minimal 100 pcs dalam 30 hari terakhir\n` +
+                `2. Pastikan transaksi tersimpan di laporan\n` +
+                `3. Baru coba scan AI lagi`);
         }
 
         // Prompt yang paksa AI pakai data REAL, bukan ngarang
