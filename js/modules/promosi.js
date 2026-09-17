@@ -1032,6 +1032,7 @@ const PromosiModule = {
 
     getPromoDescription(p) {
         try {
+            const cfg = p.config||{};
             if (p.type === 'tebus_murah') {
                 const prod = this.products.find(item => String(item.id || item.docId) === String(p.config.targetProdId));
                 return `Min. Rp ${(p.config.minSpend||0).toLocaleString()} → Tebus ${prod?.name || prod?.nama || 'Item'} Rp ${(p.config.discountPrice||0).toLocaleString()}`;
@@ -1048,9 +1049,14 @@ const PromosiModule = {
             } else if (p.type === 'weekend') {
                 const prod = this.products.find(item => String(item.id || item.docId) === String(p.config.prodId));
                 return `Diskon Rp ${(p.config.discount||0).toLocaleString()}/pcs ${prod?.name || ''} (Weekend)`;
+            } else if (p.type === 'umum' || cfg.scope==='general' || cfg.isGeneral) {
+                const minSpend = cfg.minSpend||0;
+                const disc = cfg.percent ? `${cfg.percent}%` : `Rp ${(cfg.discount||0).toLocaleString()}`;
+                if (cfg.detectOnly) return `Terdeteksi di transaksi: Belanja min Rp ${minSpend.toLocaleString()} → Potongan ${disc} (Apply Manual)`;
+                return `Promo UMUM: Min Rp ${minSpend.toLocaleString()} → ${disc}`;
             }
         } catch(e) {}
-        return '-';
+        return p.reason || p.autoReason || '-';
     },
 
     async deletePromo(id) {
@@ -1492,16 +1498,30 @@ const PromosiModule = {
         const products = await DB.getProducts() || [];
         const findProd = (id) => products.find(p => String(p.id||p.docId) === String(id));
         
-        // Pastikan product ID valid
+        // Pastikan product ID valid - umum boleh kosong
         const targetIds = sug.target_product_ids || [];
-        if (targetIds.length === 0) {
+        const isUmum = (sug.type||'').toLowerCase()==='umum' || sug.config?.scope==='general' || sug.config?.isGeneral;
+        if (targetIds.length === 0 && !isUmum) {
             alert('AI ngasih ID produk ngawur (tidak ada di database). Coba Scan lagi.');
             return;
         }
 
         // Normalisasi config sesuai type agar transaksi bisa baca
         let finalConfig = { ...sug.config };
-        const type = sug.type;
+        let type = sug.type;
+        // FIX UMUM: detect manual, bukan auto apply, bukan member
+        if (isUmum) {
+            type = 'umum';
+            finalConfig.scope = 'general';
+            finalConfig.isGeneral = true;
+            finalConfig.isUmum = true;
+            finalConfig.detectOnly = true;
+            finalConfig.autoApply = false;
+            finalConfig.manualApply = true;
+            finalConfig.isMemberOnly = false;
+            finalConfig.minSpend = Number(finalConfig.minSpend||0);
+            if (!finalConfig.percent && !finalConfig.discount) finalConfig.percent = 10;
+        }
 
         // Fix config berdasarkan type - SAMAKAN DENGAN FORMAT AUTO DETECT
         if (type === 'discount' || type === 'weekend') {
@@ -1569,7 +1589,10 @@ const PromosiModule = {
             createdAt: new Date().toISOString(),
             expiryAt: new Date(Date.now() + 30*24*60*60*1000).toISOString(),
             detectionPeriod: this.detectionPeriod || 'weekly',
-            periodLabel: this.getPeriodConfig ? this.getPeriodConfig().label : '7 hari'
+            periodLabel: this.getPeriodConfig ? this.getPeriodConfig().label : '7 hari',
+            isGeneral: finalConfig.isGeneral || type==='umum',
+            detectOnly: type==='umum',
+            caraPakai: this.getPromoDescription({type: type, config: finalConfig, reason: sug.reason, autoReason: sug.reason})
         };
 
         console.log('Approve AI promo (format transaksi):', promoData);
