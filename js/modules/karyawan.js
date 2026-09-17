@@ -18,6 +18,7 @@ const KaryawanModule = {
     attendances: [],
     salaries: [],
     transactions: [],
+    editingShiftId: null,
 
     get activeTab() { return window._karyawanState.activeTab; },
     set activeTab(val) { window._karyawanState.activeTab = val; },
@@ -215,10 +216,14 @@ const KaryawanModule = {
                     ${this.shifts.length === 0 ? '<p style="text-align:center; font-size:0.75rem; color:var(--text-secondary); padding:10px; background:var(--bg-primary); border-radius:8px;">Belum ada jadwal shift</p>' : ''}
                     ${this.shifts.map(s => {
                         const op = this.operators.find(o => String(o.id) === String(s.operatorId));
-                        return `<div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-primary); border:1px solid var(--border-color); padding:10px; border-radius:8px;">
-                                <div><b style="color:var(--text-primary); font-size:0.85rem;">${s.name}</b> <span style="font-size:0.65rem; background:var(--accent-color); color:#fff; padding:2px 6px; border-radius:10px;">${op ? op.name : 'Unknown'}</span>
+                        const isEditing = String(this.editingShiftId) === String(s.id);
+                        return `<div style="display:flex; justify-content:space-between; align-items:center; background:${isEditing ? 'var(--bg-secondary)' : 'var(--bg-primary)'}; border:1px solid ${isEditing ? 'var(--accent-color)' : 'var(--border-color)'}; padding:10px; border-radius:8px; ${isEditing ? 'outline:1px solid var(--accent-color);' : ''}">
+                                <div><b style="color:var(--text-primary); font-size:0.85rem;">${s.name}</b> ${isEditing ? '<span style="font-size:0.6rem; background:#f59e0b; color:#000; padding:1px 5px; border-radius:10px; margin-left:4px;">SEDANG DIEDIT</span>' : ''} <span style="font-size:0.65rem; background:var(--accent-color); color:#fff; padding:2px 6px; border-radius:10px;">${op ? op.name : 'Unknown'}</span>
                                 <div style="font-size:0.72rem; color:var(--text-secondary); margin-top:2px;">🕒 ${s.startTime} - ${s.endTime} WIB | 📅 ${s.day || 'Setiap Hari'}</div></div>
-                                <button onclick="KaryawanModule.deleteShift('${s.id}')" style="background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3); padding:4px 8px; border-radius:6px; font-size:0.7rem; font-weight:bold; cursor:pointer;">Hapus</button></div>`;
+                                <div style="display:flex; gap:4px;">
+                                    <button onclick="KaryawanModule.editShift('${s.id}')" style="background:rgba(37,99,235,0.12); color:#2563eb; border:1px solid rgba(37,99,235,0.3); padding:4px 8px; border-radius:6px; font-size:0.7rem; font-weight:bold; cursor:pointer;">✏️ Edit</button>
+                                    <button onclick="KaryawanModule.deleteShift('${s.id}')" style="background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3); padding:4px 8px; border-radius:6px; font-size:0.7rem; font-weight:bold; cursor:pointer;">Hapus</button>
+                                </div></div>`;
                     }).join('')}
                 </div>
             </div>
@@ -228,7 +233,54 @@ const KaryawanModule = {
     deleteShift(id) {
         if (!confirm('Hapus shift ini?')) return;
         this.shifts = this.shifts.filter(s => String(s.id) !== String(id));
+        if (String(this.editingShiftId) === String(id)) {
+            this.editingShiftId = null;
+        }
         localStorage.setItem('edc_shifts', JSON.stringify(this.shifts));
+        this.refreshView();
+    },
+
+    editShift(id) {
+        const shift = this.shifts.find(s => String(s.id) === String(id));
+        if (!shift) return alert('Data shift tidak ditemukan!');
+        this.editingShiftId = id;
+        this.refreshView();
+        // Setelah render, isi form
+        setTimeout(() => {
+            const opSelect = document.getElementById('shift-operator-id');
+            const nameInput = document.getElementById('shift-name');
+            const daySelect = document.getElementById('shift-day');
+            const startInput = document.getElementById('shift-start-time');
+            const endInput = document.getElementById('shift-end-time');
+            const submitBtn = document.querySelector('#form-add-shift button[type="submit"]');
+            if (opSelect) opSelect.value = shift.operatorId;
+            if (nameInput) nameInput.value = shift.name;
+            if (daySelect) daySelect.value = shift.day || 'Setiap Hari';
+            if (startInput) startInput.value = shift.startTime;
+            if (endInput) endInput.value = shift.endTime;
+            if (submitBtn) {
+                submitBtn.textContent = '💾 Update Shift';
+                submitBtn.style.background = '#f59e0b';
+            }
+            // Tambah tombol batal jika belum ada
+            const form = document.getElementById('form-add-shift');
+            if (form && !document.getElementById('btn-cancel-edit-shift')) {
+                const cancelBtn = document.createElement('button');
+                cancelBtn.id = 'btn-cancel-edit-shift';
+                cancelBtn.type = 'button';
+                cancelBtn.textContent = '❌ Batal Edit';
+                cancelBtn.style.cssText = 'width:100%; margin-top:8px; padding:10px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border-color); border-radius:8px; font-weight:bold; font-size:0.85rem; cursor:pointer;';
+                cancelBtn.onclick = () => this.cancelEditShift();
+                form.appendChild(cancelBtn);
+                // Scroll ke form
+                form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                nameInput?.focus();
+            }
+        }, 100);
+    },
+
+    cancelEditShift() {
+        this.editingShiftId = null;
         this.refreshView();
     },
 
@@ -441,30 +493,88 @@ const KaryawanModule = {
             </div>`;
     },
 
+    getShiftDurationMinutes(operatorId) {
+        // FIX BARU: Ambil durasi berdasarkan rentang jam shift karyawan
+        const opShifts = this.shifts.filter(s => String(s.operatorId) === String(operatorId));
+        if (opShifts.length === 0) return 480; // fallback 8 jam jika belum set shift
+        // Hitung rata-rata durasi semua shift operator ini, atau pakai shift pertama
+        const durations = opShifts.map(s => {
+            if (!s.startTime || !s.endTime) return 480;
+            const [sh, sm] = s.startTime.split(':').map(Number);
+            const [eh, em] = s.endTime.split(':').map(Number);
+            let startMins = sh * 60 + sm;
+            let endMins = eh * 60 + em;
+            let diff = endMins - startMins;
+            if (diff <= 0) diff += 24 * 60; // lintas hari (misal 22:00-06:00)
+            return diff;
+        });
+        // Jika ada 1 shift, pakai itu. Jika banyak, rata-rata
+        const avg = durations.reduce((a,b)=>a+b,0) / durations.length;
+        return Math.round(avg) || 480;
+    },
+
     calculateAutomatedSalary(operatorId, period) {
         const op = this.operators.find(o => String(o.id) === String(operatorId));
         const opName = op ? op.name : 'Unknown Operator';
         const opPhone = op ? (op.phone || op.noHp || op.wa || '-') : '-';
         const salSetting = this.salaries.find(s => String(s.operatorId) === String(operatorId)) || { dailyRate: 50000, weeklyRate: 300000, monthlyRate: 1250000, bonusPercent: 0 };
-        const absensiLogs = this.getProcessedAbsensiLogs().filter(a => String(a.operatorId) === String(operatorId) && !a.isPaid);
+        const allLogs = this.getProcessedAbsensiLogs().filter(a => String(a.operatorId) === String(operatorId) && !a.isPaid);
         const now = new Date();
-        let filteredLogs = [];
-        if (period === 'daily') filteredLogs = absensiLogs.filter(a => new Date(a.rawLoginTime).toDateString() === now.toDateString());
-        else if (period === 'weekly') { const sevenDaysAgo = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)); filteredLogs = absensiLogs.filter(a => new Date(a.rawLoginTime) >= sevenDaysAgo); }
-        else filteredLogs = absensiLogs;
-        const totalMinutes = filteredLogs.reduce((sum, log) => sum + log.durationMinutes, 0);
-        let baseRate = salSetting.dailyRate; let standardMinutes = 480;
-        if (period === 'weekly') { baseRate = salSetting.weeklyRate; standardMinutes = 480 * 6; }
-        else if (period === 'monthly') { baseRate = salSetting.monthlyRate; standardMinutes = 480 * 25; }
-        const ratePerMinute = standardMinutes > 0 ? (baseRate / standardMinutes) : 0;
+        let startDate;
+        if (period === 'daily') {
+            startDate = new Date(now); startDate.setHours(0,0,0,0);
+        } else if (period === 'weekly') {
+            startDate = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+        } else {
+            startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0,0,0,0);
+        }
+        const filteredLogs = allLogs.filter(a => {
+            const d = new Date(a.rawLoginTime);
+            return d >= startDate && d <= now;
+        });
+        const totalMinutes = filteredLogs.reduce((sum, log) => sum + (Number(log.durationMinutes) || 0), 0);
+        const totalHours = totalMinutes / 60;
+
+        // === FIX BARU: durasi berdasarkan rentang jam shift ===
+        const shiftDuration = this.getShiftDurationMinutes(operatorId); // misal 390 menit untuk 16:30-23:00
+        // dailyRate sekarang adalah untuk shiftDuration, bukan 480 menit fix
+        let ratePerMinute;
+        if (period === 'daily') {
+            const base = Number(salSetting.dailyRate) || 0;
+            ratePerMinute = shiftDuration > 0 ? base / shiftDuration : 0;
+        } else if (period === 'weekly') {
+            // weeklyRate untuk 6x durasi shift (6 hari kerja)
+            const base = Number(salSetting.weeklyRate) || (Number(salSetting.dailyRate) * 6);
+            const weeklyStandard = shiftDuration * 6;
+            ratePerMinute = weeklyStandard > 0 ? base / weeklyStandard : 0;
+        } else {
+            // monthlyRate untuk 25x durasi shift (25 hari kerja)
+            const base = Number(salSetting.monthlyRate) || (Number(salSetting.dailyRate) * 25);
+            const monthlyStandard = shiftDuration * 25;
+            ratePerMinute = monthlyStandard > 0 ? base / monthlyStandard : 0;
+        }
+        // Fallback
+        if (!ratePerMinute || ratePerMinute <= 0) {
+            const fallbackBase = Number(salSetting.dailyRate) || 0;
+            ratePerMinute = shiftDuration > 0 ? fallbackBase / shiftDuration : fallbackBase / 480;
+        }
         const baseSalaryCalculated = Math.round(totalMinutes * ratePerMinute);
-        const opTrxs = this.transactions.filter(t => { const tOpId = t.operator?.id || t.operatorId; const tOpName = t.operator?.name || t.operator; return String(tOpId) === String(operatorId) || tOpName === opName; });
-        const totalOmset = opTrxs.reduce((sum, t) => sum + (Number(t.total ?? t.grandTotal ?? 0)), 0);
-        const totalProfit = opTrxs.reduce((sum, t) => sum + (Number(t.grossProfit ?? t.computedLaba ?? 0)), 0);
+
+        const opTrxs = this.transactions.filter(t => {
+            const tOpId = t.operator?.id || t.operatorId;
+            const tOpName = t.operator?.name || t.operator;
+            const matchesOp = String(tOpId) === String(operatorId) || tOpName === opName;
+            if (!matchesOp) return false;
+            const tDate = new Date(t.createdAt || t.timestamp || t.date || now);
+            return tDate >= startDate && tDate <= now;
+        });
+        const totalOmset = opTrxs.reduce((sum, t) => sum + (Number(t.total ?? t.grandTotal ?? t.omset ?? 0)), 0);
+        const totalProfit = opTrxs.reduce((sum, t) => sum + (Number(t.grossProfit ?? t.computedLaba ?? t.laba ?? t.profit ?? 0)), 0);
         const bonusPercent = Number(salSetting.bonusPercent || 0);
         const bonusCalculated = Math.round((totalProfit * bonusPercent) / 100);
         const grandTotalSalary = baseSalaryCalculated + bonusCalculated;
-        return { opName, opPhone, period, filteredLogs, totalMinutes, ratePerMinute, baseSalaryCalculated, totalOmset, totalProfit, bonusPercent, bonusCalculated, grandTotalSalary };
+        const effectiveDays = shiftDuration > 0 ? (totalMinutes / shiftDuration).toFixed(2) : '0';
+        return { opName, opPhone, period, startDate, shiftDuration, filteredLogs, totalMinutes, totalHours, effectiveDays, ratePerMinute, baseSalaryCalculated, totalOmset, totalProfit, opTrxCount: opTrxs.length, bonusPercent, bonusCalculated, grandTotalSalary };
     },
 
     async payAndResetSalary() {
@@ -517,10 +627,25 @@ const KaryawanModule = {
             const startTime = document.getElementById('shift-start-time').value;
             const endTime = document.getElementById('shift-end-time').value;
             if (!operatorId) return alert('Pilih operator karyawan!');
-            const newShift = { id: 'shift_' + Date.now(), operatorId, name, day, startTime, endTime };
-            this.shifts.push(newShift);
-            localStorage.setItem('edc_shifts', JSON.stringify(this.shifts));
-            alert('Shift berhasil ditambahkan!'); this.refreshView();
+            if (startTime >= endTime) {
+                // Izinkan shift lintas hari (misal 22:00-06:00) tapi validasi jika sama
+                if (startTime === endTime) return alert('Jam masuk dan jam keluar tidak boleh sama!');
+            }
+            if (this.editingShiftId) {
+                const idx = this.shifts.findIndex(s => String(s.id) === String(this.editingShiftId));
+                if (idx >= 0) {
+                    this.shifts[idx] = { ...this.shifts[idx], operatorId, name, day, startTime, endTime };
+                    localStorage.setItem('edc_shifts', JSON.stringify(this.shifts));
+                    this.editingShiftId = null;
+                    alert('Shift berhasil diperbarui!'); 
+                    this.refreshView();
+                }
+            } else {
+                const newShift = { id: 'shift_' + Date.now(), operatorId, name, day, startTime, endTime };
+                this.shifts.push(newShift);
+                localStorage.setItem('edc_shifts', JSON.stringify(this.shifts));
+                alert('Shift berhasil ditambahkan!'); this.refreshView();
+            }
         });
         document.getElementById('search-absensi-name')?.addEventListener('input', (e) => { this.absensiSearchName = e.target.value; this.absensiCurrentPage = 1; this.refreshView(); });
         document.getElementById('search-absensi-date')?.addEventListener('change', (e) => { this.absensiSearchDate = e.target.value; this.absensiCurrentPage = 1; this.refreshView(); });
