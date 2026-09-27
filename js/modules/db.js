@@ -1,6 +1,6 @@
 const DB = {
     dbName: 'PosAppDB',
-    dbVersion: 7,
+    dbVersion: 8, // FIX: bump karena tambah operators
 
     mode: localStorage.getItem('edc_db_mode') || 'local',
     firestore: null,
@@ -118,6 +118,18 @@ const DB = {
                     if (!dispStore.indexNames.contains('type')) dispStore.createIndex('type', 'type', { unique: false });
                     if (!dispStore.indexNames.contains('date')) dispStore.createIndex('date', 'date', { unique: false });
                     if (!dispStore.indexNames.contains('syncStatus')) dispStore.createIndex('syncStatus', 'syncStatus', { unique: false });
+                }
+                // === FIX: OPERATORS STORE ===
+                if (!db.objectStoreNames.contains('operators')) {
+                    const opStore = db.createObjectStore('operators', { keyPath: 'id' });
+                    opStore.createIndex('phone', 'phone', { unique: false });
+                    opStore.createIndex('name', 'name', { unique: false });
+                    opStore.createIndex('syncStatus', 'syncStatus', { unique: false });
+                } else {
+                    const opStore = e.target.transaction.objectStore('operators');
+                    if (!opStore.indexNames.contains('phone')) opStore.createIndex('phone', 'phone', { unique: false });
+                    if (!opStore.indexNames.contains('name')) opStore.createIndex('name', 'name', { unique: false });
+                    if (!opStore.indexNames.contains('syncStatus')) opStore.createIndex('syncStatus', 'syncStatus', { unique: false });
                 }
                 // === NEW: ATTENDANCES - FIX LAPORAN LOGIN/LOGOUT ===
                 if (!db.objectStoreNames.contains('attendances')) {
@@ -637,6 +649,91 @@ const DB = {
     },
 
 
+    // --- OPERATORS - FIX SYNC CLOUD ---
+    async getOperators() {
+        try {
+            const db = await this.open();
+            const idbOps = await new Promise((resolve) => {
+                const tx = db.transaction('operators', 'readonly');
+                const store = tx.objectStore('operators');
+                const req = store.getAll();
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => resolve([]);
+            });
+            let lsOps = [];
+            try { lsOps = JSON.parse(localStorage.getItem('edc_operators')||'[]'); } catch(e){}
+            if (idbOps.length===0 && lsOps.length>0) {
+                for (const op of lsOps) { try { await this.saveOperator(op, false); } catch(e){} }
+                return lsOps;
+            }
+            if (idbOps.length>0 && lsOps.length>0) {
+                const map = new Map();
+                [...idbOps, ...lsOps].forEach(o=>{ if(o&&o.id) map.set(o.id, {...(map.get(o.id)||{}), ...o}); });
+                return Array.from(map.values());
+            }
+            return idbOps;
+        } catch(e) {
+            try { return JSON.parse(localStorage.getItem('edc_operators')||'[]'); } catch(e2){ return []; }
+        }
+    },
+    async saveOperator(operator, triggerSync=true) {
+        const id = operator.id || `op_${Date.now()}_${Math.random().toString(36).substring(2,5)}`;
+        const payload = {
+            id, name: operator.name || 'Operator',
+            phone: operator.phone || operator.noHp || '',
+            noHp: operator.phone || operator.noHp || '',
+            pin: operator.pin || '', role: operator.role || 'operator',
+            syncStatus: 'pending',
+            createdAt: operator.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+        try {
+            let existing = JSON.parse(localStorage.getItem('edc_operators')||'[]');
+            const idx = existing.findIndex(o=>o.id===payload.id);
+            if (idx>=0) existing[idx]=payload; else existing.push(payload);
+            localStorage.setItem('edc_operators', JSON.stringify(existing));
+        } catch(e){}
+        try {
+            const db = await this.open();
+            await new Promise((resolve)=>{
+                const tx = db.transaction('operators','readwrite');
+                const store = tx.objectStore('operators');
+                const req = store.put(payload);
+                req.onsuccess=()=>resolve(); req.onerror=()=>resolve();
+            });
+        } catch(e){}
+        if (triggerSync) { try { this.syncPendingData(); } catch(e){} }
+        return payload;
+    },
+    async deleteOperator(id) {
+        try {
+            let existing = JSON.parse(localStorage.getItem('edc_operators')||'[]');
+            existing = existing.filter(o=>o.id!==id);
+            localStorage.setItem('edc_operators', JSON.stringify(existing));
+        } catch(e){}
+        try {
+            const db = await this.open();
+            await new Promise((resolve)=>{
+                try {
+                    const tx = db.transaction('operators','readwrite');
+                    const store = tx.objectStore('operators');
+                    const req = store.delete(id);
+                    req.onsuccess=()=>resolve(); req.onerror=()=>resolve();
+                } catch(e){ resolve(); }
+            });
+        } catch(e){}
+        if (navigator.onLine) {
+            try {
+                const fs = await this.getFirestoreInstance();
+                if (fs) {
+                    const { doc, deleteDoc } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js");
+                    await deleteDoc(doc(fs, 'operators', String(id)));
+                }
+            } catch(err){ console.warn('Gagal hapus operator cloud:', err); }
+        }
+        return true;
+    },
+
     // --- MEMBERS ---
     async getMembers() {
         const db = await this.open();
@@ -705,7 +802,7 @@ const DB = {
 
         try {
             const { doc, writeBatch } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js");
-            const stores = ['products', 'promotions', 'transactions', 'disposal_logs', 'members', 'member_logs', 'attendances'];
+            const stores = ['products', 'promotions', 'transactions', 'disposal_logs', 'members', 'member_logs', 'attendances', 'operators'];
 
             for (const storeName of stores) {
                 const db = await this.open();
@@ -755,7 +852,7 @@ const DB = {
 
         try {
             const { collection, query, onSnapshot } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js");
-            const stores = ['products', 'promotions', 'transactions', 'disposal_logs', 'members', 'member_logs', 'attendances'];
+            const stores = ['products', 'promotions', 'transactions', 'disposal_logs', 'members', 'member_logs', 'attendances', 'operators'];
 
             stores.forEach(storeName => {
                 const q = query(collection(fs, storeName));

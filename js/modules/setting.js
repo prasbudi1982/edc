@@ -208,29 +208,37 @@ const SettingModule = {
             document.getElementById('input-admin-new-pin').value = '';
         });
 
-        document.getElementById('btn-add-operator')?.addEventListener('click', () => {
+        document.getElementById('btn-add-operator')?.addEventListener('click', async () => {
             const name = document.getElementById('input-op-name').value.trim();
             const phone = document.getElementById('input-op-phone').value.trim();
             const pin = document.getElementById('input-op-pin').value.trim();
             if (!name || !pin) { alert('Nama dan PIN wajib diisi!'); return; }
-            const operators = JSON.parse(localStorage.getItem('edc_operators') || '[]');
-            operators.push({ id: 'op_' + Date.now(), name, phone: phone || '-', noHp: phone || '-', pin, role: 'operator' });
-            localStorage.setItem('edc_operators', JSON.stringify(operators));
-            alert('Operator berhasil ditambahkan!');
-            if (window.app) window.app.loadModule('setting');
+            const btn = document.getElementById('btn-add-operator');
+            const orig = btn.textContent; btn.textContent='⏳ Menyimpan...'; btn.disabled=true;
+            try {
+                await DB.saveOperator({ id: 'op_' + Date.now(), name, phone: phone || '-', noHp: phone || '-', pin, role: 'operator' });
+                alert('Operator berhasil ditambahkan & sinkron ke cloud!');
+                if (window.app) window.app.loadModule('setting');
+            } catch(e){ alert('Gagal: '+e.message); btn.textContent=orig; btn.disabled=false; }
         });
-
         document.querySelectorAll('.btn-delete-op').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const id = e.target.dataset.id;
-                if (confirm('Hapus operator ini?')) {
-                    let operators = JSON.parse(localStorage.getItem('edc_operators') || '[]');
-                    operators = operators.filter(o => o.id !== id);
-                    localStorage.setItem('edc_operators', JSON.stringify(operators));
-                    if (window.app) window.app.loadModule('setting');
+            btn.addEventListener('click', async (e) => {
+                const id = e.currentTarget.dataset.id || e.target.dataset.id;
+                if (confirm('Hapus operator ini? Akan dihapus dari lokal & cloud.')) {
+                    try { await DB.deleteOperator(id); if (window.app) window.app.loadModule('setting'); }
+                    catch(err){ alert('Gagal hapus: '+err.message); }
                 }
             });
         });
+        (async () => {
+            if ((localStorage.getItem('edc_db_mode')||'local')==='cloud') {
+                try { await DB.syncPendingData(); } catch(e){}
+                try {
+                    const cloudOps = await DB.getOperators();
+                    if (cloudOps?.length>0) localStorage.setItem('edc_operators', JSON.stringify(cloudOps));
+                } catch(e){}
+            }
+        })();
 
         document.getElementById('btn-db-local')?.addEventListener('click', () => {
             DB.setMode('local');
