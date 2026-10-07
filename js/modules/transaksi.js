@@ -77,10 +77,10 @@ const TransaksiModule = {
     memberPromoData: null,
     showPreviewModal: false,
     selectedPaymentMethod: null,
-    appliedPromoIds: [], // Promo yang sudah di-apply manual
-    promoAddedItems: [], // Tracker barang yang ditambahkan via promo: { promoId, prodId, qty }
-    uangDibayar: 0, // FITUR BARU: uang pembeli
-    kembalian: 0, // FITUR BARU: uang kembalian
+    appliedPromoIds: [],
+    promoAddedItems: [],
+    uangDibayar: 0,
+    kembalian: 0,
 
     async render() {
         // FIX REPORT: restore memberDiscount & redeemPoints dari _memberPromoState agar tidak hilang setelah Apply
@@ -192,6 +192,7 @@ const TransaksiModule = {
         let detectedPromos = baseResult.detectedPromos;
         let memberDiscount = this.memberDiscount || 0;
         let total = Math.max(0, baseResult.totalBeforeTax - memberDiscount + taxTotal);
+        window._lastTotalForKembalian = total;
         // Untuk kompatibilitas template lama, kita tetap pakai variabel total yang sudah termasuk member discount
 
         const scannerMode = localStorage.getItem('edc_scanner_mode') || 'camera';
@@ -373,6 +374,21 @@ const TransaksiModule = {
                         <span>TOTAL</span>
                         <span>Rp ${total.toLocaleString()}</span>
                     </div>
+
+                    <!-- TAMBAHAN FIELD BAYAR & KEMBALIAN - SIMPLE -->
+                    <div style="margin-top:8px; border-top:1px dashed var(--border-color); padding-top:8px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                            <span style="font-size:0.85rem;">Bayar</span>
+                            <input type="number" id="bayar-input" value="${this.uangDibayar||''}" placeholder="0"
+                                style="width:130px; padding:6px 8px; text-align:right; background:var(--bg-card); color:var(--text-primary); border:1px solid var(--border-color); border-radius:6px;"
+                                oninput="TransaksiModule.hitungKembalianSimple(this.value)">
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.9rem;">
+                            <span>Kembali</span>
+                            <span id="kembali-display">Rp ${(this.kembalian||0).toLocaleString('id-ID')}</span>
+                        </div>
+                        <div id="kembali-info" style="font-size:0.7rem; text-align:right; color:var(--text-secondary); margin-top:2px;"></div>
+                    </div>
                 </div>
 
                 <!-- Saran Produk Terlaris -->
@@ -474,7 +490,8 @@ const TransaksiModule = {
 
     // --- RENDER MODAL PRINT PREVIEW & FORM PELANGGAN HUTANG ---
     renderPreviewModal(subtotal, discount, taxTotal, taxDetails, total) {
-        window._lastTotalForKembalian = total;
+        const bayar = Number(this.uangDibayar||0);
+        const kembali = bayar - total;
         const storeName = localStorage.getItem('edc_store_name') || 'POS EDC';
         const activeUser = JSON.parse(localStorage.getItem('edc_active_user') || '{"name":"Admin Utama","role":"admin"}');
 
@@ -530,43 +547,6 @@ const TransaksiModule = {
                             </button>
                         </div>
 
-                        <!-- FORM CASH - HITUNG KEMBALIAN - BARU -->
-                        ${this.selectedPaymentMethod === 'CASH' ? `
-                            <div style="background:#f0fdf4; padding:12px; border-radius:8px; border:1px solid #22c55e; margin-bottom:10px;">
-                                <div style="font-size:0.8rem; font-weight:bold; color:#166534; margin-bottom:8px;">💰 Pembayaran CASH - Hitung Kembalian</div>
-                                
-                                <div style="background:#fff; padding:8px; border-radius:6px; margin-bottom:8px; text-align:center; border:1px dashed #16a34a;">
-                                    <div style="font-size:0.7rem; color:#666;">TOTAL BELANJA</div>
-                                    <div style="font-size:1.2rem; font-weight:bold; color:#111;">Rp ${total.toLocaleString('id-ID')}</div>
-                                </div>
-
-                                <label style="font-size:0.75rem; font-weight:bold; display:block; margin-bottom:4px;">Uang Pembeli:</label>
-                                <input type="number" id="cash-bayar-input" inputmode="numeric" placeholder="Contoh: 100000" value="${this.uangDibayar||''}" 
-                                    style="width:100%; padding:10px; font-size:1.1rem; border:2px solid #22c55e; border-radius:6px; margin-bottom:8px; box-sizing:border-box; font-weight:bold;"
-                                    oninput="TransaksiModule.setUangDibayar(this.value)" autofocus>
-
-                                <div style="display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap;">
-                                    <button onclick="TransaksiModule.setUangPas()" style="flex:1; padding:7px; font-size:0.7rem; background:#e5e7eb; border:1px solid #ccc; border-radius:6px; cursor:pointer; min-width:70px; font-weight:bold;">UANG PAS</button>
-                                    <button onclick="TransaksiModule.addNominal(10000)" style="padding:7px 10px; font-size:0.7rem; background:#fff; border:1px solid #22c55e; border-radius:6px; cursor:pointer;">+10rb</button>
-                                    <button onclick="TransaksiModule.addNominal(20000)" style="padding:7px 10px; font-size:0.7rem; background:#fff; border:1px solid #22c55e; border-radius:6px; cursor:pointer;">+20rb</button>
-                                    <button onclick="TransaksiModule.addNominal(50000)" style="padding:7px 10px; font-size:0.7rem; background:#fff; border:1px solid #22c55e; border-radius:6px; cursor:pointer;">+50rb</button>
-                                    <button onclick="TransaksiModule.addNominal(100000)" style="padding:7px 10px; font-size:0.7rem; background:#fff; border:1px solid #22c55e; border-radius:6px; cursor:pointer;">+100rb</button>
-                                </div>
-
-                                <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-bottom:10px;">
-                                    <button onclick="TransaksiModule.setNominalValue(50000)" style="padding:8px; font-size:0.75rem; background:#fff; border:1px solid #ddd; border-radius:6px; cursor:pointer;">50rb</button>
-                                    <button onclick="TransaksiModule.setNominalValue(100000)" style="padding:8px; font-size:0.75rem; background:#fff; border:1px solid #ddd; border-radius:6px; cursor:pointer;">100rb</button>
-                                    <button onclick="TransaksiModule.setNominalValue(200000)" style="padding:8px; font-size:0.75rem; background:#fff; border:1px solid #ddd; border-radius:6px; cursor:pointer;">200rb</button>
-                                </div>
-
-                                <div style="background:#111827; color:#fff; padding:12px; border-radius:8px; text-align:center;">
-                                    <div style="font-size:0.7rem; opacity:0.8; letter-spacing:1px;">KEMBALIAN</div>
-                                    <div id="cash-kembali-display" style="font-size:1.5rem; font-weight:bold; color:#4ade80; margin:4px 0;">Rp ${(this.hitungKembalian(total, this.uangDibayar)).toLocaleString('id-ID')}</div>
-                                    <div id="cash-status" style="font-size:0.75rem; margin-top:4px; color:${this.uangDibayar===0 ? '#9ca3af' : this.uangDibayar < total ? '#f87171' : '#4ade80'};">${this.uangDibayar==0?'Masukkan uang pembeli': this.uangDibayar < total ? `Kurang Rp ${(total-this.uangDibayar).toLocaleString('id-ID')}` : `Kembalian Rp ${this.hitungKembalian(total,this.uangDibayar).toLocaleString('id-ID')}`}</div>
-                                </div>
-                            </div>
-                        ` : ''}
-
                         <!-- FORM INPUT DATA PELANGGAN KHUSUS BON / HUTANG -->
                         ${this.selectedPaymentMethod === 'BON' ? `
                             <div style="background:#fffbe0; padding:10px; border-radius:6px; border:1px solid #f59e0b; margin-bottom:10px;">
@@ -579,16 +559,9 @@ const TransaksiModule = {
 
                         <!-- TOMBOL EKSEKUSI PENYELESAIAN TRANSAKSI -->
                         ${this.selectedPaymentMethod ? `
-                            ${this.selectedPaymentMethod==='CASH' ? `
-                                <button id="btn-exec-cash" onclick="TransaksiModule.executePayment()" ${this.uangDibayar < total || this.uangDibayar===0 ? 'disabled' : ''} 
-                                    style="width:100%; padding:12px; background:#111827; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:0.9rem; opacity:${this.uangDibayar < total || this.uangDibayar===0 ? '0.5':'1'};">
-                                    ${this.uangDibayar===0 ? 'Masukkan Uang Pembeli' : this.uangDibayar < total ? `Uang Kurang Rp ${(total-this.uangDibayar).toLocaleString('id-ID')}` : `BAYAR CASH - Kembalian Rp ${this.hitungKembalian(total,this.uangDibayar).toLocaleString('id-ID')}`}
-                                </button>
-                            ` : `
-                                <button onclick="TransaksiModule.executePayment()" style="width:100%; padding:10px; background:#111827; color:#fff; border:none; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.85rem;">
-                                    Selesaikan Transaksi (${this.selectedPaymentMethod})
-                                </button>
-                            `}
+                            <button onclick="TransaksiModule.executePayment()" style="width:100%; padding:10px; background:#111827; color:#fff; border:none; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.85rem;">
+                                Selesaikan Transaksi (${this.selectedPaymentMethod})
+                            </button>
                         ` : ''}
 
                         <button onclick="TransaksiModule.closePreviewModal()" style="width:100%; padding:6px; background:#6b7280; color:#fff; border:none; border-radius:4px; margin-top:6px; font-size:0.75rem; cursor:pointer;">
@@ -600,118 +573,44 @@ const TransaksiModule = {
         `;
     },
 
-
-    // === FITUR BARU: HITUNG KEMBALIAN ===
-    hitungKembalian(total, bayar){
-        const t = Number(total)||0;
-        const b = Number(bayar)||0;
-        return Math.max(0, b - t);
-    },
-    setUangDibayar(val){
-        this.uangDibayar = Number(String(val).replace(/[^0-9]/g,''))||0;
+    // === TAMBAHAN: HITUNG KEMBALIAN SIMPLE ===
+    hitungKembalianSimple(val){
         const total = window._lastTotalForKembalian || 0;
-        this.kembalian = this.hitungKembalian(total, this.uangDibayar);
-        this.updateKembalianUI();
-    },
-    updateKembalianUI(){
-        const elKembali = document.getElementById('cash-kembali-display');
-        const elStatus = document.getElementById('cash-status');
-        const elBayarBtn = document.getElementById('btn-exec-cash');
-        const total = window._lastTotalForKembalian || 0;
-        if(elKembali){
-            elKembali.textContent = `Rp ${this.kembalian.toLocaleString('id-ID')}`;
+        const bayar = Number(String(val||'').replace(/[^0-9]/g,''))||0;
+        this.uangDibayar = bayar;
+        this.kembalian = bayar - total;
+        const el = document.getElementById('kembali-display');
+        const info = document.getElementById('kembali-info');
+        if(el) el.textContent = `Rp ${this.kembalian.toLocaleString('id-ID')}`;
+        if(info){
+            if(bayar===0) info.textContent='';
+            else if(bayar < total) info.textContent=`Kurang Rp ${(total-bayar).toLocaleString('id-ID')}`;
+            else info.textContent=`Kembali Rp ${this.kembalian.toLocaleString('id-ID')}`;
         }
-        if(elStatus){
-            if(this.uangDibayar === 0){
-                elStatus.textContent = 'Masukkan uang pembeli';
-                elStatus.style.color = '#9ca3af';
-            } else if(this.uangDibayar < total){
-                const kurang = total - this.uangDibayar;
-                elStatus.textContent = `Kurang Rp ${kurang.toLocaleString('id-ID')}`;
-                elStatus.style.color = '#ef4444';
-            } else {
-                elStatus.textContent = `Kembalian Rp ${this.kembalian.toLocaleString('id-ID')}`;
-                elStatus.style.color = '#16a34a';
-            }
-        }
-        if(elBayarBtn){
-            const kurang = this.uangDibayar < total;
-            elBayarBtn.disabled = kurang || this.uangDibayar===0;
-            elBayarBtn.style.opacity = elBayarBtn.disabled ? '0.5' : '1';
-            if(!elBayarBtn.disabled){
-                elBayarBtn.textContent = `BAYAR CASH - Kembalian Rp ${this.kembalian.toLocaleString('id-ID')}`;
-            } else if(this.uangDibayar===0){
-                elBayarBtn.textContent = `Masukkan Uang Pembeli`;
-            } else {
-                elBayarBtn.textContent = `Uang Kurang Rp ${(total-this.uangDibayar).toLocaleString('id-ID')}`;
-            }
-        }
-    },
-    setUangPas(){
-        const total = window._lastTotalForKembalian||0;
-        this.uangDibayar = total;
-        const inp = document.getElementById('cash-bayar-input');
-        if(inp) inp.value = total;
-        this.setUangDibayar(total);
-    },
-    addNominal(nom){
-        const cur = Number(this.uangDibayar||0);
-        const next = cur + Number(nom||0);
-        this.uangDibayar = next;
-        const inp = document.getElementById('cash-bayar-input');
-        if(inp) inp.value = next;
-        this.setUangDibayar(next);
-    },
-    setNominalValue(val){
-        this.uangDibayar = Number(val)||0;
-        const inp = document.getElementById('cash-bayar-input');
-        if(inp) inp.value = val;
-        this.setUangDibayar(val);
     },
 
     selectPaymentMethod(method) {
+
         this.selectedPaymentMethod = method;
-        if(method !== 'CASH'){
-            this.uangDibayar = 0;
-            this.kembalian = 0;
-        }
         window.app.loadModule('transaksi');
         try { this._clearMemberPromoCache(); } catch(e){}
-        // Auto focus ke input uang jika CASH
-        if(method==='CASH'){
-            setTimeout(()=>{
-                document.getElementById('cash-bayar-input')?.focus();
-                this.updateKembalianUI();
-            }, 100);
-        }
     },
 
 
     closePreviewModal() {
         this.showPreviewModal = false;
         this.selectedPaymentMethod = null;
-        this.uangDibayar = 0;
-        this.kembalian = 0;
+        // Jangan reset bayar/kembali di sini biar tetap keliatan di struk, reset pas selesai transaksi
         window.app.loadModule('transaksi');
     },
 
-    // --- EKSEKUSI PENYIMPANAN & CETAK STRUK + KEMBALIAN BARU ---
     async executePayment() {
+        const elBayar = document.getElementById('bayar-input');
+        if(elBayar){ this.uangDibayar = Number(elBayar.value||0); this.kembalian = this.uangDibayar - (window._lastTotalForKembalian||0); }
         const paymentMethod = this.selectedPaymentMethod;
         if (!paymentMethod) return alert('Silakan pilih metode pembayaran!');
-        // Hitung total final dulu untuk validasi cash
-        const _calcForCash = this.calculateTotalWithPromos();
-        const _totalFinalForCash = Math.max(0, (_calcForCash.totalBeforeTax||0) - (this.memberDiscount||0) + (_calcForCash.taxTotal||0));
-        window._lastTotalForKembalian = _totalFinalForCash;
-        let _uangDibayarCash = 0;
-        let _kembalianCash = 0;
-        if(paymentMethod==='CASH'){
-            const inputEl = document.getElementById('cash-bayar-input');
-            _uangDibayarCash = Number(inputEl?.value || this.uangDibayar || 0);
-            if(_uangDibayarCash===0) return alert('Masukkan uang pembeli!');
-            if(_uangDibayarCash < _totalFinalForCash) return alert(`Uang kurang! Total Rp ${_totalFinalForCash.toLocaleString('id-ID')}, bayar Rp ${_uangDibayarCash.toLocaleString('id-ID')}. Kurang Rp ${(_totalFinalForCash-_uangDibayarCash).toLocaleString('id-ID')}`);
-            _kembalianCash = _uangDibayarCash - _totalFinalForCash;
-        }
+        if(paymentMethod==='CASH' && this.uangDibayar>0 && this.uangDibayar < (window._lastTotalForKembalian||0)) return alert('Uang kurang!');
+
 
         // Ambil data operator aktif dari session
         const activeUser = JSON.parse(localStorage.getItem('edc_active_user') || '{"name":"Admin Utama","role":"admin"}');
@@ -742,8 +641,9 @@ const TransaksiModule = {
 
         const transactionData = { 
             createdAt: new Date().toISOString(),
-            uangDibayar: paymentMethod==='CASH' ? _uangDibayarCash : 0,
-            kembalian: paymentMethod==='CASH' ? _kembalianCash : 0,
+            uangDibayar: Number(this.uangDibayar||0),
+            kembalian: Number(this.kembalian||0),
+
             operator: {
                 id: activeUser.id || 'admin_root',
                 name: activeUser.name || 'Admin Utama',
@@ -822,20 +722,16 @@ const TransaksiModule = {
             } catch(e) { console.warn('update member points fail', e); }
         }
 
-        // 3. Cetak Struk via Printer.js - DIALOG PDF DIMATIKAN + KEMBALIAN
+        // 3. Cetak Struk via Printer.js - DIALOG PDF DIMATIKAN
         try {
-            await Printer.printReceipt(this.cart, total, { uangDibayar: transactionData.uangDibayar||0, kembalian: transactionData.kembalian||0, paymentMethod });
+            await Printer.printReceipt(this.cart, total);
         } catch (err) {
             console.error('Gagal mencetak struk:', err);
             // this.fallbackWindowPrint(transactionData); // dimatikan agar tidak muncul Simpan sebagai PDF
             console.log('Fallback print dimatikan');
         }
 
-        if(paymentMethod==='CASH'){
-            alert(`Transaksi Berhasil!\nTotal: Rp ${total.toLocaleString('id-ID')}\nBayar: Rp ${transactionData.uangDibayar.toLocaleString('id-ID')}\nKembalian: Rp ${transactionData.kembalian.toLocaleString('id-ID')}`);
-        } else {
-            alert(`Transaksi Berhasil! (${paymentMethod})`);
-        }
+        alert(`Transaksi Berhasil! (${paymentMethod})`);
         this.showPreviewModal = false;
         this.selectedPaymentMethod = null;
         this.uangDibayar = 0;
@@ -1640,6 +1536,14 @@ promoId) {
 
     clearCart() {
         this.cart = [];
+        this.uangDibayar = 0;
+        this.kembalian = 0;
+        window._lastTotalForKembalian = 0;
+        // reset input jika ada
+        const elBayar = document.getElementById('bayar-input'); if(elBayar) elBayar.value='';
+        const elKembali = document.getElementById('kembali-display'); if(elKembali) elKembali.textContent='Rp 0';
+        const elInfo = document.getElementById('kembali-info'); if(elInfo) elInfo.textContent='';
+
         this.appliedPromoIds = [];
         this.promoAddedItems = [];
         window.app.loadModule('transaksi');
